@@ -18,7 +18,7 @@ export async function createClient() {
               cookieStore.set(name, value, options),
             );
           } catch {
-            // Server Components cannot set cookies; session refresh happens in middleware or route handlers.
+            // Server Components cannot set cookies; session refresh happens in route handlers or layouts.
           }
         },
       },
