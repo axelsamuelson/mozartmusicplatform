@@ -6,10 +6,13 @@ import {
   playlistIdFromContextUri,
 } from "@/lib/spotify/currentlyPlaying";
 import type { SpotifyPlaybackApiResponse } from "@/lib/spotify/currentlyPlaying";
+import { SpotifyApiError } from "@/lib/spotify/errors";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 
 export const dynamic = "force-dynamic";
+
+const CACHE_OK = "public, max-age=4";
 
 export async function GET() {
   const supabase = await createClient();
@@ -40,7 +43,7 @@ export async function GET() {
     if (!playback) {
       const empty: SpotifyPlaybackApiResponse = { isPlaying: false };
       return NextResponse.json(empty, {
-        headers: { "Cache-Control": "no-store" },
+        headers: { "Cache-Control": CACHE_OK },
       });
     }
 
@@ -61,9 +64,23 @@ export async function GET() {
       contextName,
     };
     return NextResponse.json(body, {
-      headers: { "Cache-Control": "no-store" },
+      headers: { "Cache-Control": CACHE_OK },
     });
   } catch (e) {
+    if (e instanceof SpotifyApiError) {
+      if (e.status === 429) {
+        return NextResponse.json(
+          { error: "Spotify rate limited", retryAfter: e.retryAfterSec },
+          { status: 429, headers: { "Cache-Control": "no-store" } },
+        );
+      }
+      if (e.status === 401) {
+        return NextResponse.json({ error: e.message }, { status: 401 });
+      }
+      if (e.status === 403) {
+        return NextResponse.json({ error: e.message }, { status: 403 });
+      }
+    }
     const message = e instanceof Error ? e.message : "Playback fetch failed";
     const spotifyStatus = /^Spotify API (\d{3}):/.exec(message)?.[1];
     if (spotifyStatus === "401") {
@@ -73,7 +90,10 @@ export async function GET() {
       return NextResponse.json({ error: message }, { status: 403 });
     }
     if (spotifyStatus === "429") {
-      return NextResponse.json({ error: message }, { status: 429 });
+      return NextResponse.json(
+        { error: "Spotify rate limited", retryAfter: 30 },
+        { status: 429, headers: { "Cache-Control": "no-store" } },
+      );
     }
     return NextResponse.json({ error: message }, { status: 502 });
   }

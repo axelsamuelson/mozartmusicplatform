@@ -1,5 +1,7 @@
 /** Spotify GET /v1/me/player — active playback on any device (Web API). */
 
+import { parseRetryAfterSec, SpotifyApiError } from "@/lib/spotify/errors";
+
 const ME_PLAYER = "https://api.spotify.com/v1/me/player";
 
 export type SpotifyRepeatState = "off" | "context" | "track";
@@ -216,7 +218,13 @@ export async function fetchCurrentPlayback(
 
   if (!res.ok) {
     const t = await res.text();
-    throw new Error(`Spotify API ${res.status}: ${t.slice(0, 400)}`);
+    throw new SpotifyApiError(
+      res.status,
+      t,
+      res.status === 429
+        ? parseRetryAfterSec(res.headers.get("Retry-After"))
+        : undefined,
+    );
   }
 
   const text = await res.text();

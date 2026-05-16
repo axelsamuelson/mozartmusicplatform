@@ -261,7 +261,12 @@ async function ensurePlayer(): Promise<SpotifyWebPlaybackPlayer> {
       getOAuthToken: (cb) => {
         void getTokenString()
           .then((token) => cb(token))
-          .catch(() => cb(""));
+          .catch((err) => {
+            console.error(
+              "[WAM Player] token",
+              err instanceof Error ? err.message : err,
+            );
+          });
       },
       volume: 0.7,
     });

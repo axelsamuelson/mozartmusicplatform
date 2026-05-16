@@ -112,7 +112,7 @@ export function Navigation() {
     };
   }, [isOpen]);
 
-  if (pathname === "/") {
+  if (pathname === "/" || pathname === "/privacy" || pathname === "/terms") {
     return null;
   }
 

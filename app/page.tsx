@@ -128,6 +128,16 @@ export default async function Home() {
             </div>
           ))}
         </div>
+
+        <footer className="animate-fade-in-trust mt-16 text-center text-xs text-white/30 pb-8">
+          <a href="/privacy" className="transition-colors hover:text-white/50">
+            Privacy Policy
+          </a>
+          {" · "}
+          <a href="/terms" className="transition-colors hover:text-white/50">
+            Terms of Service
+          </a>
+        </footer>
       </div>
     </section>
   );

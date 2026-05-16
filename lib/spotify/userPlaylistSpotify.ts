@@ -1,5 +1,7 @@
 /** Spotify Web API calls with a user OAuth access token (e.g. provider_token). */
 
+import { parseRetryAfterSec, SpotifyApiError } from "@/lib/spotify/errors";
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -12,6 +14,8 @@ type SpotifyJsonRetryOptions = {
   maxRetryAfterMs?: number;
   /** Per-request timeout to Spotify (ms). Default 18000. Omit with 0. */
   fetchTimeoutMs?: number;
+  /** Retry on HTTP 429. Default true; set false for write ops that Spotify rate-limits hard. */
+  retryOn429?: boolean;
 };
 
 async function spotifyJsonWithRetry<T>(
@@ -24,50 +28,102 @@ async function spotifyJsonWithRetry<T>(
   const maxBackoffMs = options.maxBackoffMs ?? 8000;
   const maxRetryAfterMs = options.maxRetryAfterMs ?? 60_000;
   const fetchTimeoutMs = options.fetchTimeoutMs ?? 18_000;
+  const retryOn429 = options.retryOn429 ?? true;
   let lastError: Error | null = null;
 
-  const timeoutSignal =
-    fetchTimeoutMs > 0 &&
-    typeof AbortSignal !== "undefined" &&
-    typeof AbortSignal.timeout === "function"
-      ? AbortSignal.timeout(fetchTimeoutMs)
-      : undefined;
-
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const res = await fetch(url, {
-      ...init,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        ...(init?.headers as Record<string, string>),
-      },
-      signal:
-        timeoutSignal && init?.signal && typeof AbortSignal.any === "function"
-          ? AbortSignal.any([timeoutSignal, init.signal])
-          : (timeoutSignal ?? init?.signal),
-      cache: "no-store",
-    });
+    const timeoutSignal =
+      fetchTimeoutMs > 0 &&
+      typeof AbortSignal !== "undefined" &&
+      typeof AbortSignal.timeout === "function"
+        ? AbortSignal.timeout(fetchTimeoutMs)
+        : undefined;
+
+    const isCreatePlaylist =
+      url.includes("/v1/me/playlists") && init?.method === "POST";
+    if (isCreatePlaylist) {
+      console.log("[Spotify] request", {
+        attempt,
+        method: init?.method ?? "GET",
+        url,
+        body:
+          typeof init?.body === "string"
+            ? init.body
+            : init?.body
+              ? String(init.body)
+              : null,
+      });
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          ...(init?.headers as Record<string, string>),
+        },
+        signal:
+          timeoutSignal && init?.signal && typeof AbortSignal.any === "function"
+            ? AbortSignal.any([timeoutSignal, init.signal])
+            : (timeoutSignal ?? init?.signal),
+        cache: "no-store",
+      });
+    } catch (e) {
+      const isAbort =
+        e instanceof Error &&
+        (e.name === "AbortError" || e.name === "TimeoutError");
+      lastError = new Error(
+        isAbort
+          ? "Spotify API timeout: request took too long"
+          : e instanceof Error
+            ? e.message
+            : "Spotify request failed",
+      );
+      if (attempt >= maxAttempts) {
+        throw lastError;
+      }
+      await sleep(Math.min(maxBackoffMs, 400 * 2 ** (attempt - 1)));
+      continue;
+    }
 
     if (res.ok) {
+      if (isCreatePlaylist) {
+        console.log("[Spotify] response ok", { attempt, status: res.status });
+      }
       if (res.status === 204) return undefined as T;
       return (await res.json()) as T;
     }
 
     const t = await res.text();
-    lastError = new Error(`Spotify API ${res.status}: ${t.slice(0, 400)}`);
+    if (isCreatePlaylist) {
+      console.log("[Spotify] response", {
+        attempt,
+        status: res.status,
+        retryAfter: res.headers.get("Retry-After"),
+        body: t.slice(0, 500),
+      });
+    }
+    lastError = new SpotifyApiError(
+      res.status,
+      t,
+      res.status === 429
+        ? parseRetryAfterSec(res.headers.get("Retry-After"))
+        : undefined,
+    );
 
-    const retryable = res.status === 429 || res.status === 503;
+    const retryable =
+      res.status === 503 || (res.status === 429 && retryOn429);
     if (!retryable || attempt >= maxAttempts) {
       throw lastError;
     }
 
     let waitMs = Math.min(maxBackoffMs, 500 * 2 ** (attempt - 1));
-    const retryAfter = res.headers.get("Retry-After");
-    if (retryAfter) {
-      const sec = Number.parseInt(retryAfter, 10);
-      if (!Number.isNaN(sec) && sec >= 0) {
-        waitMs = Math.min(maxRetryAfterMs, Math.max(waitMs, sec * 1000));
-      }
-    }
+    const retryAfterSec = parseRetryAfterSec(
+      res.headers.get("Retry-After"),
+      30,
+    );
+    waitMs = Math.min(maxRetryAfterMs, Math.max(waitMs, retryAfterSec * 1000));
     await sleep(waitMs);
   }
 
@@ -122,10 +178,10 @@ export async function createSpotifyPlaylist(
       }),
     },
     {
-      maxAttempts: 3,
-      maxBackoffMs: 3500,
-      maxRetryAfterMs: 8000,
-      fetchTimeoutMs: 14_000,
+      maxAttempts: 2,
+      retryOn429: false,
+      maxBackoffMs: 1500,
+      fetchTimeoutMs: 8_000,
     },
   );
 }

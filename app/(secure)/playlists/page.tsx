@@ -26,6 +26,7 @@ import type {
   MoodTagRow,
 } from "@/lib/types/ratings";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
+import { capRetryAfterSec } from "@/lib/spotify/errors";
 import { glassCardTight, pageHeading, pageSub } from "@/lib/wamUi";
 
 const emptyFilters = (): PlaylistFiltersState => ({
@@ -34,6 +35,10 @@ const emptyFilters = (): PlaylistFiltersState => ({
   filter_moments: [],
   filter_min_score: 0,
 });
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export default function PlaylistsPage() {
   const [playlists, setPlaylists] = useState<WamPlaylistRow[]>([]);
@@ -84,6 +89,35 @@ export default function PlaylistsPage() {
     loadAll();
   }, []);
 
+  async function postCreatePlaylist(
+    playlistName: string,
+    signal: AbortSignal,
+  ): Promise<{
+    res: Response;
+    body: { error?: string; retryAfter?: number; playlist?: WamPlaylistRow };
+  }> {
+    const res = await fetch("/api/playlists", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: playlistName,
+        filter_genres: filters.filter_genres.length ? filters.filter_genres : undefined,
+        filter_mood_levels: filters.filter_mood_levels.length
+          ? filters.filter_mood_levels
+          : undefined,
+        filter_moments: filters.filter_moments.length ? filters.filter_moments : undefined,
+        filter_min_score: filters.filter_min_score,
+      }),
+      signal,
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      retryAfter?: number;
+      playlist?: WamPlaylistRow;
+    };
+    return { res, body };
+  }
+
   async function handleCreate() {
     if (createInFlightRef.current) return;
     const n = name.trim();
@@ -98,24 +132,29 @@ export default function PlaylistsPage() {
     const ac = new AbortController();
     const timeoutId = window.setTimeout(() => ac.abort(), clientTimeoutMs);
     try {
-      const res = await fetch("/api/playlists", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: n,
-          filter_genres: filters.filter_genres.length ? filters.filter_genres : undefined,
-          filter_mood_levels: filters.filter_mood_levels.length
-            ? filters.filter_mood_levels
-            : undefined,
-          filter_moments: filters.filter_moments.length ? filters.filter_moments : undefined,
-          filter_min_score: filters.filter_min_score,
-        }),
-        signal: ac.signal,
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        playlist?: WamPlaylistRow;
-      };
+      let { res, body } = await postCreatePlaylist(n, ac.signal);
+
+      if (res.status === 429) {
+        const retryAfter = capRetryAfterSec(
+          typeof body.retryAfter === "number" && body.retryAfter > 0
+            ? body.retryAfter
+            : 30,
+          30,
+        );
+        toast.dismiss(loadingToastId);
+        const waitToastId = toast.loading(
+          `Spotify rate limited — trying again in ${retryAfter}s…`,
+        );
+        await sleep(retryAfter * 1000);
+        ({ res, body } = await postCreatePlaylist(n, ac.signal));
+        toast.dismiss(waitToastId);
+        if (res.status === 429) {
+          toast.error("Please wait 60 seconds and try again");
+          return;
+        }
+        toast.loading("Creating playlist on Spotify…", { id: loadingToastId });
+      }
+
       if (!res.ok) throw new Error(body.error || res.statusText);
       if (body.playlist) {
         setPlaylists((prev) => [body.playlist!, ...prev]);

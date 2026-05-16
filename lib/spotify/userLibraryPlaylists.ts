@@ -1,5 +1,7 @@
 /** Spotify Web API: current user’s playlists (owned only) and playlist item stats (user OAuth token). */
 
+import { parseRetryAfterSec } from "@/lib/spotify/errors";
+
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -14,11 +16,8 @@ async function spotifyGetJson<T>(accessToken: string, url: string): Promise<T> {
     });
 
     if (res.status === 429 && attempt < maxAttempts - 1) {
-      const ra = res.headers.get("Retry-After");
-      const sec = ra ? Number.parseFloat(ra) : NaN;
-      const waitMs = Number.isFinite(sec)
-        ? Math.min(30_000, Math.max(400, sec * 1000))
-        : Math.min(10_000, 800 * 2 ** attempt);
+      const retryAfterSec = parseRetryAfterSec(res.headers.get("Retry-After"), 30);
+      const waitMs = Math.min(30_000, Math.max(400, retryAfterSec * 1000));
       await res.text().catch(() => undefined);
       await delay(waitMs);
       continue;

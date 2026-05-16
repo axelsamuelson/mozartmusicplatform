@@ -30,6 +30,7 @@ import {
 import type { SpotifyWebPlaybackState } from "@/lib/spotify/player";
 import { cn } from "@/lib/utils";
 import type { RatingDetail } from "@/lib/types/ratings";
+import { capRetryAfterSec, MAX_RETRY_AFTER_SEC } from "@/lib/spotify/errors";
 
 function formatMs(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) ms = 0;
@@ -49,6 +50,13 @@ function isApiPlaybackWithTrack(
   );
 }
 
+const POLL_MS_PLAYING = 8_000;
+const POLL_MS_IDLE = 15_000;
+const POLL_BACKOFF_MAX_MS = MAX_RETRY_AFTER_SEC * 1000;
+
+const playbackPollingDisabled =
+  process.env.NEXT_PUBLIC_DISABLE_PLAYBACK_POLLING === "true";
+
 export function Player() {
   const [hasUser, setHasUser] = useState(false);
   const [hasToken, setHasToken] = useState(false);
@@ -67,6 +75,9 @@ export function Player() {
     uri: null,
     name: null,
   });
+  const apiPlayingRef = useRef(false);
+  const pollBackoffUntilRef = useRef(0);
+  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const refreshSdkState = useCallback(async () => {
     try {
@@ -78,10 +89,25 @@ export function Player() {
   }, []);
 
   const fetchApiPlayback = useCallback(async () => {
+    if (Date.now() < pollBackoffUntilRef.current) return;
     try {
       const res = await fetch("/api/spotify/playback", { cache: "no-store" });
-      const json = (await res.json()) as SpotifyPlaybackApiResponse & { error?: string };
+      const json = (await res.json()) as SpotifyPlaybackApiResponse & {
+        error?: string;
+        retryAfter?: number;
+      };
+      if (res.status === 429) {
+        const retrySec = capRetryAfterSec(
+          typeof json.retryAfter === "number" ? json.retryAfter : 60,
+          60,
+        );
+        pollBackoffUntilRef.current =
+          Date.now() + Math.min(retrySec * 1000, POLL_BACKOFF_MAX_MS);
+        return;
+      }
       if (!res.ok || typeof json.error === "string") return;
+      apiPlayingRef.current =
+        "isPlaying" in json && json.isPlaying === true;
       setApiPlayback(json as SpotifyPlaybackApiResponse);
     } catch {
       /* ignore */
@@ -89,6 +115,10 @@ export function Player() {
   }, []);
 
   const refreshAll = useCallback(async () => {
+    if (playbackPollingDisabled) {
+      await refreshSdkState();
+      return;
+    }
     await Promise.all([refreshSdkState(), fetchApiPlayback()]);
   }, [fetchApiPlayback, refreshSdkState]);
 
@@ -96,21 +126,30 @@ export function Player() {
     const supabase = createClient();
 
     registerPlaybackTokenProvider(async () => {
-      const { data } = await supabase.auth.getSession();
-      return data.session?.provider_token ?? null;
+      const res = await fetch("/api/spotify/token", { cache: "no-store" });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { access_token?: string };
+      return typeof body.access_token === "string" ? body.access_token : null;
     });
 
     async function syncSession() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      const { data } = await supabase.auth.getSession();
-      const token = data.session?.provider_token ?? null;
+      let tokenOk = false;
+      if (user) {
+        try {
+          const res = await fetch("/api/spotify/token", { cache: "no-store" });
+          tokenOk = res.ok;
+        } catch {
+          tokenOk = false;
+        }
+      }
 
       setHasUser(Boolean(user));
-      setHasToken(Boolean(token));
+      setHasToken(tokenOk);
 
-      if (!user || !token) {
+      if (!user || !tokenOk) {
         disconnectPlayback();
         setPlaybackReady(false);
         setConnectError(null);
@@ -135,7 +174,9 @@ export function Player() {
         setConnectError(
           e instanceof Error ? e.message : "Playback unavailable",
         );
-        void fetchApiPlayback();
+        if (!playbackPollingDisabled) {
+          void fetchApiPlayback();
+        }
       }
     }
 
@@ -154,12 +195,44 @@ export function Player() {
   }, [fetchApiPlayback, refreshAll]);
 
   useEffect(() => {
-    if (!hasToken) return;
-    void fetchApiPlayback();
-    const id = window.setInterval(() => {
-      void fetchApiPlayback();
-    }, 3000);
-    return () => window.clearInterval(id);
+    if (!hasToken || playbackPollingDisabled) return;
+
+    let cancelled = false;
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      const now = Date.now();
+      if (now < pollBackoffUntilRef.current) {
+        pollTimerRef.current = setTimeout(() => {
+          void tick();
+        }, pollBackoffUntilRef.current - now);
+        return;
+      }
+      const delay = apiPlayingRef.current ? POLL_MS_PLAYING : POLL_MS_IDLE;
+      pollTimerRef.current = setTimeout(() => {
+        void tick();
+      }, delay);
+    };
+
+    const tick = async () => {
+      if (cancelled) return;
+      await fetchApiPlayback();
+      scheduleNext();
+    };
+
+    void fetchApiPlayback().then(() => scheduleNext());
+
+    return () => {
+      cancelled = true;
+      if (pollTimerRef.current) {
+        clearTimeout(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+    };
   }, [hasToken, fetchApiPlayback]);
 
   useEffect(() => {
@@ -176,6 +249,10 @@ export function Player() {
       sdkState.track_window?.current_track &&
       !sdkState.paused,
   );
+
+  useEffect(() => {
+    if (sdkPlaying) apiPlayingRef.current = true;
+  }, [sdkPlaying]);
 
   const useSdk = sdkPlaying;
 
