@@ -25,6 +25,10 @@ export type SpotifyCurrentPlayback = {
   contextType: string | null;
   contextUri: string | null;
   contextName: string | null;
+  contextImageUrl?: string | null;
+  isWamPlaylist?: boolean;
+  /** WAM `wam_playlists.id` when `isWamPlaylist` is true. */
+  wamPlaylistId?: string | null;
 };
 
 /** GET /api/spotify/playback JSON body. */
@@ -168,37 +172,69 @@ export function playlistIdFromContextUri(uri: string | null): string | null {
   return m?.[1] ?? null;
 }
 
-const PLAYLIST_NAME_CACHE_TTL_MS = 600_000;
-const playlistNameCache = new Map<string, { name: string; ts: number }>();
+const PLAYLIST_META_CACHE_TTL_MS = 600_000;
+const playlistMetaCache = new Map<
+  string,
+  { name: string; imageUrl: string | null; ts: number }
+>();
 
-export async function fetchSpotifyPlaylistName(
+export type SpotifyPlaylistMeta = {
+  name: string | null;
+  imageUrl: string | null;
+};
+
+/** Cached playlist title only — never calls Spotify. */
+export function getCachedSpotifyPlaylistName(playlistId: string): string | null {
+  const hit = playlistMetaCache.get(playlistId);
+  if (!hit) return null;
+  if (Date.now() - hit.ts >= PLAYLIST_META_CACHE_TTL_MS) {
+    playlistMetaCache.delete(playlistId);
+    return null;
+  }
+  return hit.name;
+}
+
+export async function fetchSpotifyPlaylistMeta(
   accessToken: string,
   playlistId: string,
-): Promise<string | null> {
+): Promise<SpotifyPlaylistMeta> {
   const now = Date.now();
-  const hit = playlistNameCache.get(playlistId);
-  if (hit && now - hit.ts < PLAYLIST_NAME_CACHE_TTL_MS) {
-    return hit.name;
+  const hit = playlistMetaCache.get(playlistId);
+  if (hit && now - hit.ts < PLAYLIST_META_CACHE_TTL_MS) {
+    return { name: hit.name, imageUrl: hit.imageUrl };
   }
 
   const res = await fetch(
-    `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}?fields=name`,
+    `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}?fields=name,images`,
     {
       headers: { Authorization: `Bearer ${accessToken}` },
       cache: "no-store",
     },
   );
-  if (!res.ok) return null;
+  if (!res.ok) return { name: null, imageUrl: null };
   try {
-    const j = (await res.json()) as { name?: string };
-    const name = typeof j.name === "string" ? j.name : null;
-    if (name && name.length > 0) {
-      playlistNameCache.set(playlistId, { name, ts: now });
+    const j = (await res.json()) as {
+      name?: string;
+      images?: { url?: string }[];
+    };
+    const name =
+      typeof j.name === "string" && j.name.length > 0 ? j.name : null;
+    const imageUrl = pickImage(j.images);
+    if (name) {
+      playlistMetaCache.set(playlistId, { name, imageUrl, ts: now });
     }
-    return name;
+    return { name, imageUrl: imageUrl || null };
   } catch {
-    return null;
+    return { name: null, imageUrl: null };
   }
+}
+
+export async function fetchSpotifyPlaylistName(
+  accessToken: string,
+  playlistId: string,
+): Promise<string | null> {
+  const meta = await fetchSpotifyPlaylistMeta(accessToken, playlistId);
+  return meta.name;
 }
 
 /**

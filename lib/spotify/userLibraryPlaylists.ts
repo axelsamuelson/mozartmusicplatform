@@ -129,11 +129,6 @@ export async function fetchOwnedMyPlaylistSummaries(
     if (url) await delay(120);
   }
 
-  console.log("[my-playlists] owned playlists", {
-    spotifyUserId: me.id,
-    count: out.length,
-  });
-
   return out;
 }
 
@@ -196,25 +191,9 @@ export async function fetchPlaylistTrackStats(
   let pageIndex = 0;
 
   while (url) {
-    const offset = offsetFromPlaylistItemsUrl(url);
-    console.log("[my-playlists] tracks pagination request", {
-      playlistId,
-      pageIndex,
-      offset,
-    });
-
     const page: PlaylistItemsPage = await spotifyGetJson<PlaylistItemsPage>(accessToken, url);
     const items = page.items ?? [];
     rawItemsSeen += items.length;
-
-    console.log("[my-playlists] tracks pagination response", {
-      playlistId,
-      pageIndex,
-      offset,
-      itemCount: items.length,
-      apiTotal: page.total,
-      next: page.next ? "yes" : "no",
-    });
 
     if (typeof page.total === "number") {
       spotifyTotal = page.total;
@@ -232,14 +211,6 @@ export async function fetchPlaylistTrackStats(
   }
 
   const total_tracks = spotifyTotal != null ? spotifyTotal : rawItemsSeen;
-
-  console.log("[my-playlists] playlist tracks summary", {
-    playlistId,
-    spotifyTotal,
-    rawItemsSeen,
-    total_tracks_used: total_tracks,
-    collectedTrackRowIds: trackRowIds.length,
-  });
 
   return { total_tracks, trackRowIds };
 }

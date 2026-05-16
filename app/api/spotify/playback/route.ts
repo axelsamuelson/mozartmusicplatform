@@ -1,18 +1,21 @@
 import { NextResponse } from "next/server";
 
+import { CACHE_NO_STORE } from "@/lib/spotify/cacheHeaders";
 import {
   fetchCurrentPlayback,
-  fetchSpotifyPlaylistName,
   playlistIdFromContextUri,
 } from "@/lib/spotify/currentlyPlaying";
 import type { SpotifyPlaybackApiResponse } from "@/lib/spotify/currentlyPlaying";
+import {
+  getDedupedPlayback,
+  setDedupedPlayback,
+} from "@/lib/spotify/playbackDedup";
+import { resolvePlaybackPlaylistContext } from "@/lib/spotify/playbackPlaylistContext";
 import { SpotifyApiError } from "@/lib/spotify/errors";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 
 export const dynamic = "force-dynamic";
-
-const CACHE_OK = "public, max-age=4";
 
 export async function GET() {
   const supabase = await createClient();
@@ -22,6 +25,13 @@ export async function GET() {
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const cached = getDedupedPlayback(user.id);
+  if (cached) {
+    return NextResponse.json(cached, {
+      headers: { "Cache-Control": CACHE_NO_STORE },
+    });
   }
 
   let accessToken: string;
@@ -42,36 +52,53 @@ export async function GET() {
     const playback = await fetchCurrentPlayback(accessToken);
     if (!playback) {
       const empty: SpotifyPlaybackApiResponse = { isPlaying: false };
+      setDedupedPlayback(user.id, empty);
       return NextResponse.json(empty, {
-        headers: { "Cache-Control": CACHE_OK },
+        headers: { "Cache-Control": CACHE_NO_STORE },
       });
     }
 
     let contextName = playback.contextName;
+    let contextImageUrl: string | null = null;
+    let isWamPlaylist = false;
+    let wamPlaylistId: string | null = null;
+
     if (
       playback.contextType === "playlist" &&
       playback.contextUri?.startsWith("spotify:playlist:")
     ) {
       const pid = playlistIdFromContextUri(playback.contextUri);
       if (pid) {
-        const name = await fetchSpotifyPlaylistName(accessToken, pid);
-        contextName = name ?? contextName;
+        const resolved = await resolvePlaybackPlaylistContext(
+          supabase,
+          user.id,
+          accessToken,
+          pid,
+        );
+        contextName = resolved.contextName ?? contextName;
+        contextImageUrl = resolved.contextImageUrl;
+        isWamPlaylist = resolved.isWamPlaylist;
+        wamPlaylistId = resolved.wamPlaylistId;
       }
     }
 
     const body: SpotifyPlaybackApiResponse = {
       ...playback,
       contextName,
+      contextImageUrl,
+      isWamPlaylist,
+      wamPlaylistId,
     };
+    setDedupedPlayback(user.id, body);
     return NextResponse.json(body, {
-      headers: { "Cache-Control": CACHE_OK },
+      headers: { "Cache-Control": CACHE_NO_STORE },
     });
   } catch (e) {
     if (e instanceof SpotifyApiError) {
       if (e.status === 429) {
         return NextResponse.json(
           { error: "Spotify rate limited", retryAfter: e.retryAfterSec },
-          { status: 429, headers: { "Cache-Control": "no-store" } },
+          { status: 429, headers: { "Cache-Control": CACHE_NO_STORE } },
         );
       }
       if (e.status === 401) {
@@ -92,7 +119,7 @@ export async function GET() {
     if (spotifyStatus === "429") {
       return NextResponse.json(
         { error: "Spotify rate limited", retryAfter: 30 },
-        { status: 429, headers: { "Cache-Control": "no-store" } },
+        { status: 429, headers: { "Cache-Control": CACHE_NO_STORE } },
       );
     }
     return NextResponse.json({ error: message }, { status: 502 });

@@ -10,7 +10,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { glassCardTight, glassPanel, pageHeading, pageSub, sectionHeading } from "@/lib/wamUi";
-import type { SpotifyCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
 import type { ItemType } from "@/lib/spotify/api";
 import type {
   GenreTagRow,
@@ -35,15 +34,6 @@ function typeLabel(t: ItemType): string {
   return "Artist";
 }
 
-function parsePlayingTrackPlayback(j: unknown): SpotifyCurrentPlayback | null {
-  if (typeof j !== "object" || j === null || !("trackId" in j)) return null;
-  const v = j as Partial<SpotifyCurrentPlayback>;
-  if (typeof v.trackId !== "string" || v.trackId.length === 0) return null;
-  if (typeof v.isPlaying !== "boolean") return null;
-  if (v.itemKind === "episode") return null;
-  return v as SpotifyCurrentPlayback;
-}
-
 export function ItemView() {
   const params = useParams();
   const searchParams = useSearchParams();
@@ -66,36 +56,6 @@ export function ItemView() {
 
   const [rating, setRating] = useState<RatingDetail | null>(null);
   const [ratingLoading, setRatingLoading] = useState(false);
-
-  const [nowPlayingThisTrack, setNowPlayingThisTrack] = useState(false);
-
-  useEffect(() => {
-    if (type !== "track" || !spotifyId) {
-      setNowPlayingThisTrack(false);
-      return;
-    }
-    const ac = new AbortController();
-    const tick = () => {
-      void fetch("/api/spotify/playback", { cache: "no-store", signal: ac.signal })
-        .then(async (res) => {
-          const j: unknown = await res.json().catch(() => null);
-          if (ac.signal.aborted) return;
-          const p = parsePlayingTrackPlayback(j);
-          setNowPlayingThisTrack(
-            Boolean(p?.isPlaying && p.trackId === spotifyId),
-          );
-        })
-        .catch(() => {
-          if (!ac.signal.aborted) setNowPlayingThisTrack(false);
-        });
-    };
-    tick();
-    const id = window.setInterval(tick, 4000);
-    return () => {
-      window.clearInterval(id);
-      ac.abort();
-    };
-  }, [type, spotifyId]);
 
   useEffect(() => {
     if (!spotifyId || !type) {
@@ -214,15 +174,6 @@ export function ItemView() {
             className={`flex gap-5 border-b border-white/[0.08] pb-8 ${glassPanel}`}
           >
             <div className="relative size-24 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/10">
-              {nowPlayingThisTrack ? (
-                <span
-                  className="absolute top-2 right-2 z-10 flex size-3.5 items-center justify-center"
-                  aria-label="This track is playing now"
-                >
-                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400/70" />
-                  <span className="relative size-2 rounded-full bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.75)]" />
-                </span>
-              ) : null}
               {item.image_url ? (
                 <Image
                   src={item.image_url}
@@ -238,15 +189,6 @@ export function ItemView() {
                 <Badge variant="outline" className="border-white/25 text-xs text-white/80">
                   {typeLabel(item.type)}
                 </Badge>
-                {nowPlayingThisTrack ? (
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-500/35 bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-100/95">
-                    <span className="relative flex size-2">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-80" />
-                      <span className="relative size-1.5 rounded-full bg-emerald-400" />
-                    </span>
-                    Now playing
-                  </span>
-                ) : null}
               </div>
               <h1 className={`${pageHeading} text-balance`}>{item.name}</h1>
               {item.artist_name ? (

@@ -41,17 +41,9 @@ async function refreshSpotifyUserToken(
   return (await res.json()) as SpotifyRefreshResponse;
 }
 
-async function isSpotifyUserTokenValid(accessToken: string): Promise<boolean> {
-  const res = await fetch("https://api.spotify.com/v1/me", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: "no-store",
-  });
-  return res.status === 200;
-}
-
 /**
- * Returns a valid Spotify user access token from the Supabase session,
- * refreshing with the provider refresh token when needed.
+ * Returns Spotify user access token from session without preemptive GET /me
+ * (avoids one Spotify API call per server request; routes handle 401).
  */
 export async function getValidProviderAccessToken(
   supabase: SupabaseClient,
@@ -65,7 +57,7 @@ export async function getValidProviderAccessToken(
   }
 
   const access = session.provider_token;
-  if (access && (await isSpotifyUserTokenValid(access))) {
+  if (access) {
     return access;
   }
 

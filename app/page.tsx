@@ -1,8 +1,8 @@
 import { redirect } from "next/navigation";
 
-import { signInWithSpotify } from "@/app/auth/actions";
+import { AuthErrorAlert } from "@/components/AuthErrorAlert";
+import { SpotifyLoginButton } from "@/components/SpotifyLoginButton";
 import { createClient } from "@/lib/supabase/server";
-import { Button } from "@/components/ui/button";
 
 function IconRate() {
   return (
@@ -43,7 +43,11 @@ function IconPlaylist() {
   );
 }
 
-export default async function Home() {
+type HomeProps = {
+  searchParams?: Promise<{ error?: string; reason?: string }>;
+};
+
+export default async function Home({ searchParams }: HomeProps) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -52,6 +56,13 @@ export default async function Home() {
   if (user) {
     redirect("/dashboard");
   }
+
+  const params = (await searchParams) ?? {};
+  const authFailed = params.error === "auth";
+  const authReason =
+    typeof params.reason === "string"
+      ? decodeURIComponent(params.reason)
+      : null;
 
   const features = [
     {
@@ -89,25 +100,10 @@ export default async function Home() {
           Sign in with Spotify to search your library vibe, capture scores, and sync playlists you own through WAM.
         </p>
 
+        <AuthErrorAlert authFailed={authFailed} reason={authReason} />
+
         <div className="animate-fade-in-buttons mb-12 flex flex-col items-center justify-center gap-4 sm:mb-16">
-          <form action={signInWithSpotify}>
-            <Button
-              type="submit"
-              size="lg"
-              className="group relative cursor-pointer overflow-hidden rounded-full border-0 bg-white px-8 py-4 text-lg font-medium text-black shadow-lg transition-all duration-300 hover:scale-105 hover:bg-gray-50 hover:shadow-lg"
-            >
-              Log in with Spotify
-              <svg
-                className="ml-2 inline-block size-5 transition-transform group-hover:translate-x-1"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-                aria-hidden
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-              </svg>
-            </Button>
-          </form>
+          <SpotifyLoginButton />
         </div>
 
         <div

@@ -2,48 +2,45 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { MutableRefObject } from "react";
 
 import { PlaylistsSubnav } from "@/components/PlaylistsSubnav";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import type {
-  SpotifyPlaylistListItem,
-  SpotifyPlaylistStatsPayload,
-} from "@/lib/types/spotifyLibrary";
+import type { SpotifyPlaylistListItem } from "@/lib/types/spotifyLibrary";
 import { glassCard, pageHeading, pageSub } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 
 type SortKey = "name" | "rated_percent" | "total_tracks";
 
-type RowWithStats = {
-  pl: SpotifyPlaylistListItem;
-  stats: SpotifyPlaylistStatsPayload | null;
+const MAX_PARALLEL_SYNCS = 1;
+
+type SyncJob = {
+  playlistId: string;
+  force: boolean;
 };
 
-function sortRows(rows: RowWithStats[], key: SortKey): RowWithStats[] {
-  const copy = [...rows];
+function sortPlaylists(items: SpotifyPlaylistListItem[], key: SortKey): SpotifyPlaylistListItem[] {
+  const copy = [...items];
   if (key === "name") {
     copy.sort((a, b) =>
-      a.pl.name.localeCompare(b.pl.name, undefined, { sensitivity: "base" }),
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
     );
   } else if (key === "rated_percent") {
     copy.sort((a, b) => {
-      const ap = a.stats?.rated_percent ?? -1;
-      const bp = b.stats?.rated_percent ?? -1;
+      const ap = a.rated_percent ?? -1;
+      const bp = b.rated_percent ?? -1;
       return (
         bp - ap ||
-        (b.stats?.rated_count ?? 0) - (a.stats?.rated_count ?? 0) ||
-        a.pl.name.localeCompare(b.pl.name)
+        (b.rated_count ?? 0) - (a.rated_count ?? 0) ||
+        a.name.localeCompare(b.name)
       );
     });
   } else {
     copy.sort((a, b) => {
-      const at = a.stats?.total_tracks ?? a.pl.total_tracks;
-      const bt = b.stats?.total_tracks ?? b.pl.total_tracks;
       return (
-        bt - at ||
-        (b.stats?.rated_percent ?? -1) - (a.stats?.rated_percent ?? -1) ||
-        a.pl.name.localeCompare(b.pl.name)
+        b.total_tracks - a.total_tracks ||
+        (b.rated_percent ?? -1) - (a.rated_percent ?? -1) ||
+        a.name.localeCompare(b.name)
       );
     });
   }
@@ -56,59 +53,15 @@ function spotifyPlaylistUrl(id: string): string {
 
 type PlaylistCardProps = {
   playlist: SpotifyPlaylistListItem;
-  statsCacheRef: MutableRefObject<Map<string, SpotifyPlaylistStatsPayload>>;
-  onStatsLoaded: (id: string, data: SpotifyPlaylistStatsPayload) => void;
+  syncing: boolean;
 };
 
-function SpotifyPlaylistCard({
-  playlist,
-  statsCacheRef,
-  onStatsLoaded,
-}: PlaylistCardProps) {
-  const [stats, setStats] = useState<SpotifyPlaylistStatsPayload | null>(() =>
-    statsCacheRef.current.get(playlist.id) ?? null,
-  );
-  const [statsLoading, setStatsLoading] = useState(
-    () => !statsCacheRef.current.has(playlist.id),
-  );
-
-  useEffect(() => {
-    const cached = statsCacheRef.current.get(playlist.id);
-    if (cached) {
-      setStats(cached);
-      setStatsLoading(false);
-      return;
-    }
-    const ac = new AbortController();
-    setStatsLoading(true);
-    void fetch(`/api/spotify/playlist-stats?id=${encodeURIComponent(playlist.id)}`, {
-      signal: ac.signal,
-    })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as SpotifyPlaylistStatsPayload & {
-          error?: string;
-        };
-        if (ac.signal.aborted) return;
-        if (!res.ok) {
-          setStats(null);
-          return;
-        }
-        statsCacheRef.current.set(playlist.id, body);
-        setStats(body);
-        onStatsLoaded(playlist.id, body);
-      })
-      .catch(() => {
-        if (!ac.signal.aborted) setStats(null);
-      })
-      .finally(() => {
-        if (!ac.signal.aborted) setStatsLoading(false);
-      });
-    return () => ac.abort();
-  }, [playlist.id, statsCacheRef, onStatsLoaded]);
-
-  const total = stats?.total_tracks ?? playlist.total_tracks;
-  const ratedPercent = stats?.rated_percent ?? 0;
-  const ratedCount = stats?.rated_count ?? 0;
+function SpotifyPlaylistCard({ playlist, syncing }: PlaylistCardProps) {
+  const hasStats = playlist.rated_count !== null;
+  const showSkeleton = playlist.missing_tracks_cache || syncing;
+  const ratedPercent = playlist.rated_percent ?? 0;
+  const ratedCount = playlist.rated_count ?? 0;
+  const total = playlist.total_tracks;
 
   return (
     <a
@@ -142,31 +95,31 @@ function SpotifyPlaylistCard({
           </p>
           <p className="truncate text-xs text-white/50">{playlist.owner}</p>
           <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white/15">
-            {statsLoading ? (
+            {showSkeleton ? (
               <div className="h-full w-full animate-pulse rounded-full bg-white/25" />
             ) : (
               <div
                 className="h-full rounded-full bg-wam transition-[width] duration-500"
-                style={{ width: `${ratedPercent}%` }}
+                style={{ width: `${hasStats ? ratedPercent : 0}%` }}
               />
             )}
           </div>
           <p className="mt-2 text-xs text-white/55">
-            {statsLoading ? (
+            {showSkeleton ? (
               <span className="inline-flex items-center gap-2 text-white/45">
                 <span
                   className="size-3 shrink-0 animate-spin rounded-full border-2 border-white/20 border-t-wam"
                   aria-hidden
                 />
-                Loading stats…
+                Syncing tracks…
               </span>
-            ) : stats ? (
+            ) : hasStats ? (
               <>
                 {ratedCount} of {total} tracks rated
                 {total > 0 ? ` (${ratedPercent}%)` : ""}
               </>
             ) : (
-              "Could not load rating stats."
+              "Waiting to sync…"
             )}
           </p>
         </div>
@@ -177,51 +130,187 @@ function SpotifyPlaylistCard({
 
 export default function SpotifyLibraryPlaylistsPage() {
   const [items, setItems] = useState<SpotifyPlaylistListItem[] | null>(null);
-  const [statsById, setStatsById] = useState<Record<string, SpotifyPlaylistStatsPayload>>({});
-  const statsCacheRef = useRef<Map<string, SpotifyPlaylistStatsPayload>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("name");
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(() => new Set());
+  const [syncAllRunning, setSyncAllRunning] = useState(false);
 
-  const onStatsLoaded = useCallback((id: string, data: SpotifyPlaylistStatsPayload) => {
-    setStatsById((prev) => ({ ...prev, [id]: data }));
+  const syncQueueRef = useRef<SyncJob[]>([]);
+  const activeSyncsRef = useRef(0);
+  const syncingIdsRef = useRef<Set<string>>(new Set());
+  const itemsRef = useRef<SpotifyPlaylistListItem[] | null>(null);
+
+  useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  const applyStatsToPlaylist = useCallback(
+    (playlistId: string, stats: {
+      rated_count: number;
+      unrated_count: number;
+      rated_percent: number;
+      total_tracks: number;
+    }) => {
+      setItems((prev) => {
+        if (!prev) return prev;
+        return prev.map((pl) =>
+          pl.id === playlistId
+            ? {
+                ...pl,
+                total_tracks: stats.total_tracks,
+                rated_count: stats.rated_count,
+                unrated_count: stats.unrated_count,
+                rated_percent: stats.rated_percent,
+                needs_sync: false,
+              }
+            : pl,
+        );
+      });
+    },
+    [],
+  );
+
+  const runSyncPlaylist = useCallback(
+    async (playlistId: string, force = false): Promise<boolean> => {
+      const res = await fetch("/api/spotify/sync-playlist-tracks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ playlist_id: playlistId, force }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        retryAfter?: number;
+        rated_count?: number;
+        unrated_count?: number;
+        rated_percent?: number;
+        total_tracks?: number;
+      };
+
+      if (res.status === 429) {
+        const wait = typeof body.retryAfter === "number" ? body.retryAfter : 30;
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        return runSyncPlaylist(playlistId, force);
+      }
+
+      if (!res.ok || typeof body.rated_count !== "number") {
+        return false;
+      }
+
+      applyStatsToPlaylist(playlistId, {
+        rated_count: body.rated_count,
+        unrated_count: body.unrated_count ?? 0,
+        rated_percent: body.rated_percent ?? 0,
+        total_tracks: body.total_tracks ?? 0,
+      });
+      return true;
+    },
+    [applyStatsToPlaylist],
+  );
+
+  const pumpSyncQueue = useCallback(() => {
+    while (
+      activeSyncsRef.current < MAX_PARALLEL_SYNCS &&
+      syncQueueRef.current.length > 0
+    ) {
+      const job = syncQueueRef.current.shift();
+      if (!job) break;
+
+      activeSyncsRef.current += 1;
+      syncingIdsRef.current.add(job.playlistId);
+      setSyncingIds(new Set(syncingIdsRef.current));
+
+      void runSyncPlaylist(job.playlistId, job.force)
+        .catch(() => undefined)
+        .finally(() => {
+          activeSyncsRef.current -= 1;
+          syncingIdsRef.current.delete(job.playlistId);
+          setSyncingIds(new Set(syncingIdsRef.current));
+          if (
+            syncQueueRef.current.length === 0 &&
+            activeSyncsRef.current === 0
+          ) {
+            setSyncAllRunning(false);
+          }
+          pumpSyncQueue();
+        });
+    }
+  }, [runSyncPlaylist]);
+
+  const enqueueSyncs = useCallback(
+    (ids: string[], force = false) => {
+      const queued = new Set(
+        syncQueueRef.current.map((job) => job.playlistId),
+      );
+      const unique = ids.filter(
+        (id) => !queued.has(id) && !syncingIdsRef.current.has(id),
+      );
+      if (unique.length === 0) return;
+
+      const jobs: SyncJob[] = unique.map((playlistId) => ({
+        playlistId,
+        force,
+      }));
+
+      if (force) {
+        syncQueueRef.current = [...jobs, ...syncQueueRef.current];
+      } else {
+        syncQueueRef.current.push(...jobs);
+      }
+      pumpSyncQueue();
+    },
+    [pumpSyncQueue],
+  );
+
+  const enqueueSyncsRef = useRef(enqueueSyncs);
+  enqueueSyncsRef.current = enqueueSyncs;
+
+  const loadPlaylists = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/spotify/my-playlists", { cache: "no-store" });
+      const body = (await res.json().catch(() => ({}))) as {
+        playlists?: SpotifyPlaylistListItem[];
+        error?: string;
+      };
+      if (!res.ok) throw new Error(body.error || res.statusText);
+      const playlists = body.playlists ?? [];
+      setItems(playlists);
+      const needAutoSync = playlists
+        .filter((p) => p.missing_tracks_cache)
+        .map((p) => p.id);
+      if (needAutoSync.length > 0) {
+        enqueueSyncsRef.current(needAutoSync);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Could not load playlists");
+      setItems(null);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    const ac = new AbortController();
-    setLoading(true);
-    setError(null);
+    void loadPlaylists();
+  }, [loadPlaylists]);
 
-    void fetch("/api/spotify/my-playlists", { signal: ac.signal })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          playlists?: SpotifyPlaylistListItem[];
-          error?: string;
-        };
-        if (!res.ok) throw new Error(body.error || res.statusText);
-        setItems(body.playlists ?? []);
-      })
-      .catch((e: unknown) => {
-        if (e instanceof Error && e.name === "AbortError") return;
-        setError(e instanceof Error ? e.message : "Could not load playlists");
-        setItems(null);
-      })
-      .finally(() => {
-        if (!ac.signal.aborted) setLoading(false);
-      });
+  const handleSyncAll = useCallback(() => {
+    const current = itemsRef.current;
+    if (!current?.length) return;
+    setSyncAllRunning(true);
+    enqueueSyncs(
+      current.map((p) => p.id),
+      true,
+    );
+  }, [enqueueSyncs]);
 
-    return () => ac.abort();
-  }, []);
-
-  const rowsForSort = useMemo((): RowWithStats[] => {
+  const sorted = useMemo(() => {
     if (!items) return [];
-    return items.map((pl) => ({
-      pl,
-      stats: statsById[pl.id] ?? statsCacheRef.current.get(pl.id) ?? null,
-    }));
-  }, [items, statsById]);
+    return sortPlaylists(items, sort);
+  }, [items, sort]);
 
-  const sorted = useMemo(() => sortRows(rowsForSort, sort), [rowsForSort, sort]);
+  const needsSyncCount = items?.filter((p) => p.needs_sync).length ?? 0;
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-10 px-4 pb-16 pt-24 md:px-6">
@@ -231,10 +320,11 @@ export default function SpotifyLibraryPlaylistsPage() {
         <h1 className={pageHeading}>My Spotify Playlists</h1>
         <p className={pageSub}>
           All playlists in your Spotify library and how many tracks you have rated in WAM.
+          Track lists are cached in Supabase and refreshed when needed.
         </p>
       </div>
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <label className="flex flex-wrap items-center gap-2 text-sm text-white/60">
           <span>Sort by</span>
           <select
@@ -248,6 +338,16 @@ export default function SpotifyLibraryPlaylistsPage() {
             <option value="total_tracks">Track count (high first)</option>
           </select>
         </label>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={loading || Boolean(error) || !items?.length || syncAllRunning}
+          onClick={handleSyncAll}
+          className="rounded-full border-white/25 bg-transparent text-white hover:bg-white/10 hover:text-white"
+        >
+          {syncAllRunning ? "Syncing…" : "Sync all"}
+          {needsSyncCount > 0 ? ` (${needsSyncCount} pending)` : ""}
+        </Button>
       </div>
 
       {error ? (
@@ -266,12 +366,11 @@ export default function SpotifyLibraryPlaylistsPage() {
         </ul>
       ) : (
         <ul className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {sorted.map(({ pl }) => (
+          {sorted.map((pl) => (
             <li key={pl.id}>
               <SpotifyPlaylistCard
                 playlist={pl}
-                statsCacheRef={statsCacheRef}
-                onStatsLoaded={onStatsLoaded}
+                syncing={syncingIds.has(pl.id)}
               />
             </li>
           ))}

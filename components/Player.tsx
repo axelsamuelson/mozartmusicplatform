@@ -1,8 +1,17 @@
 "use client";
 
 import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ListMusic, Pause, Play, SkipBack, SkipForward, Volume2 } from "lucide-react";
+import {
+  ListMusic,
+  Music2,
+  Pause,
+  Play,
+  SkipBack,
+  SkipForward,
+  Volume2,
+} from "lucide-react";
 
 import { Slider } from "@/components/ui/slider";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
@@ -30,7 +39,6 @@ import {
 import type { SpotifyWebPlaybackState } from "@/lib/spotify/player";
 import { cn } from "@/lib/utils";
 import type { RatingDetail } from "@/lib/types/ratings";
-import { capRetryAfterSec, MAX_RETRY_AFTER_SEC } from "@/lib/spotify/errors";
 
 function formatMs(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) ms = 0;
@@ -38,6 +46,50 @@ function formatMs(ms: number): string {
   const m = Math.floor(s / 60);
   const sec = s % 60;
   return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+function PlaylistContextLine({
+  name,
+  href,
+  isWam,
+  className,
+}: {
+  name: string;
+  href: string;
+  isWam: boolean;
+  className?: string;
+}) {
+  const Icon = isWam ? Music2 : ListMusic;
+  const linkClass = cn(
+    "group/playlist inline-flex min-w-0 max-w-full items-center gap-1.5 text-xs transition-colors",
+    isWam ? "text-wam hover:text-wam" : "text-wam/70 hover:text-wam",
+    className,
+  );
+  const content = (
+    <>
+      <Icon
+        className={cn("size-3.5 shrink-0", isWam ? "text-wam" : "text-wam/80")}
+        aria-hidden
+      />
+      <span className="truncate underline-offset-2 group-hover/playlist:underline">
+        {name}
+      </span>
+    </>
+  );
+
+  if (isWam && href.startsWith("/")) {
+    return (
+      <Link href={href} className={linkClass}>
+        {content}
+      </Link>
+    );
+  }
+
+  return (
+    <a href={href} target="_blank" rel="noopener noreferrer" className={linkClass}>
+      {content}
+    </a>
+  );
 }
 
 function isApiPlaybackWithTrack(
@@ -50,12 +102,14 @@ function isApiPlaybackWithTrack(
   );
 }
 
-const POLL_MS_PLAYING = 8_000;
-const POLL_MS_IDLE = 15_000;
-const POLL_BACKOFF_MAX_MS = MAX_RETRY_AFTER_SEC * 1000;
-
-const playbackPollingDisabled =
+const PLAYBACK_POLLING_DISABLED =
   process.env.NEXT_PUBLIC_DISABLE_PLAYBACK_POLLING === "true";
+
+function apiPlaybackPollMs(playback: SpotifyPlaybackApiResponse): number {
+  if (!isApiPlaybackWithTrack(playback)) return 60_000;
+  if (playback.isPlaying) return 15_000;
+  return 30_000;
+}
 
 export function Player() {
   const [hasUser, setHasUser] = useState(false);
@@ -75,10 +129,8 @@ export function Player() {
     uri: null,
     name: null,
   });
-  const apiPlayingRef = useRef(false);
-  const pollBackoffUntilRef = useRef(0);
-  const pollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
+  const apiPlaybackRef = useRef(apiPlayback);
+  apiPlaybackRef.current = apiPlayback;
   const refreshSdkState = useCallback(async () => {
     try {
       const s = await getCurrentState();
@@ -89,25 +141,12 @@ export function Player() {
   }, []);
 
   const fetchApiPlayback = useCallback(async () => {
-    if (Date.now() < pollBackoffUntilRef.current) return;
     try {
       const res = await fetch("/api/spotify/playback", { cache: "no-store" });
       const json = (await res.json()) as SpotifyPlaybackApiResponse & {
         error?: string;
-        retryAfter?: number;
       };
-      if (res.status === 429) {
-        const retrySec = capRetryAfterSec(
-          typeof json.retryAfter === "number" ? json.retryAfter : 60,
-          60,
-        );
-        pollBackoffUntilRef.current =
-          Date.now() + Math.min(retrySec * 1000, POLL_BACKOFF_MAX_MS);
-        return;
-      }
       if (!res.ok || typeof json.error === "string") return;
-      apiPlayingRef.current =
-        "isPlaying" in json && json.isPlaying === true;
       setApiPlayback(json as SpotifyPlaybackApiResponse);
     } catch {
       /* ignore */
@@ -115,10 +154,6 @@ export function Player() {
   }, []);
 
   const refreshAll = useCallback(async () => {
-    if (playbackPollingDisabled) {
-      await refreshSdkState();
-      return;
-    }
     await Promise.all([refreshSdkState(), fetchApiPlayback()]);
   }, [fetchApiPlayback, refreshSdkState]);
 
@@ -174,9 +209,7 @@ export function Player() {
         setConnectError(
           e instanceof Error ? e.message : "Playback unavailable",
         );
-        if (!playbackPollingDisabled) {
-          void fetchApiPlayback();
-        }
+        void fetchApiPlayback();
       }
     }
 
@@ -194,55 +227,6 @@ export function Player() {
     };
   }, [fetchApiPlayback, refreshAll]);
 
-  useEffect(() => {
-    if (!hasToken || playbackPollingDisabled) return;
-
-    let cancelled = false;
-
-    const scheduleNext = () => {
-      if (cancelled) return;
-      if (pollTimerRef.current) {
-        clearTimeout(pollTimerRef.current);
-        pollTimerRef.current = null;
-      }
-      const now = Date.now();
-      if (now < pollBackoffUntilRef.current) {
-        pollTimerRef.current = setTimeout(() => {
-          void tick();
-        }, pollBackoffUntilRef.current - now);
-        return;
-      }
-      const delay = apiPlayingRef.current ? POLL_MS_PLAYING : POLL_MS_IDLE;
-      pollTimerRef.current = setTimeout(() => {
-        void tick();
-      }, delay);
-    };
-
-    const tick = async () => {
-      if (cancelled) return;
-      await fetchApiPlayback();
-      scheduleNext();
-    };
-
-    void fetchApiPlayback().then(() => scheduleNext());
-
-    return () => {
-      cancelled = true;
-      if (pollTimerRef.current) {
-        clearTimeout(pollTimerRef.current);
-        pollTimerRef.current = null;
-      }
-    };
-  }, [hasToken, fetchApiPlayback]);
-
-  useEffect(() => {
-    if (!playbackReady) return;
-    const id = window.setInterval(() => {
-      void refreshSdkState();
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [playbackReady, refreshSdkState]);
-
   const sdkPlaying = Boolean(
     playbackReady &&
       sdkState &&
@@ -251,8 +235,38 @@ export function Player() {
   );
 
   useEffect(() => {
-    if (sdkPlaying) apiPlayingRef.current = true;
-  }, [sdkPlaying]);
+    if (!hasToken || PLAYBACK_POLLING_DISABLED || sdkPlaying) return;
+
+    let cancelled = false;
+    let timeoutId = 0;
+
+    const scheduleNext = () => {
+      if (cancelled) return;
+      const ms = apiPlaybackPollMs(apiPlaybackRef.current);
+      timeoutId = window.setTimeout(() => {
+        void fetchApiPlayback().finally(() => {
+          if (!cancelled) scheduleNext();
+        });
+      }, ms);
+    };
+
+    void fetchApiPlayback().finally(() => {
+      if (!cancelled) scheduleNext();
+    });
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [hasToken, fetchApiPlayback, sdkPlaying]);
+
+  useEffect(() => {
+    if (!playbackReady) return;
+    const id = window.setInterval(() => {
+      void refreshSdkState();
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [playbackReady, refreshSdkState]);
 
   const useSdk = sdkPlaying;
 
@@ -293,6 +307,24 @@ export function Player() {
     }
     return null;
   }, [displayApi]);
+
+  const playlistContext = useMemo(() => {
+    if (!displayApi || displayApi.contextType !== "playlist") return null;
+    const spotifyId = playlistIdFromContextUri(displayApi.contextUri);
+    const name =
+      (typeof displayApi.contextName === "string" &&
+        displayApi.contextName.trim()) ||
+      displayPlaylistContextName;
+    if (!name || !spotifyId) return null;
+
+    const isWam = Boolean(displayApi.isWamPlaylist);
+    const href =
+      isWam && displayApi.wamPlaylistId
+        ? `/playlists/${displayApi.wamPlaylistId}`
+        : `https://open.spotify.com/playlist/${spotifyId}`;
+
+    return { name, href, isWam };
+  }, [displayApi, displayPlaylistContextName]);
 
   const sdkTrack = sdkState?.track_window?.current_track ?? null;
 
@@ -417,15 +449,6 @@ export function Player() {
         ? "Paused · this browser"
         : null;
 
-  const playlistId =
-    displayApi?.contextType === "playlist" && displayApi.contextUri
-      ? playlistIdFromContextUri(displayApi.contextUri)
-      : null;
-  const playlistHref =
-    playlistId && displayPlaylistContextName
-      ? `https://open.spotify.com/playlist/${playlistId}`
-      : null;
-
   const duration = useSdk
     ? sdkState?.duration ?? 0
     : displayApi?.durationMs ?? sdkState?.duration ?? 0;
@@ -513,6 +536,14 @@ export function Player() {
               {hasAnyTrack ? trackTitle : "Nothing playing"}
             </p>
             <p className="truncate text-xs text-white/50">{hasAnyTrack ? artistLine : "—"}</p>
+            {playlistContext ? (
+              <PlaylistContextLine
+                name={playlistContext.name}
+                href={playlistContext.href}
+                isWam={playlistContext.isWam}
+                className="mt-0.5"
+              />
+            ) : null}
           </div>
           {canShowRate ? (
             <button
@@ -617,18 +648,13 @@ export function Player() {
             <p className="truncate text-[11px] text-white/50 md:text-xs">
               {hasAnyTrack ? artistLine : "—"}
             </p>
-            {playlistHref && displayPlaylistContextName ? (
-              <a
-                href={playlistHref}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="group/playlist mt-0.5 hidden min-w-0 items-center gap-1.5 text-xs text-wam/70 transition-colors hover:text-wam md:flex"
-              >
-                <ListMusic className="size-3.5 shrink-0 text-wam/80 group-hover/playlist:text-wam" aria-hidden />
-                <span className="truncate underline-offset-2 group-hover/playlist:underline">
-                  {displayPlaylistContextName}
-                </span>
-              </a>
+            {playlistContext ? (
+              <PlaylistContextLine
+                name={playlistContext.name}
+                href={playlistContext.href}
+                isWam={playlistContext.isWam}
+                className="mt-0.5 hidden md:inline-flex"
+              />
             ) : null}
             {deviceLine && hasAnyTrack ? (
               <p className="hidden truncate text-xs text-white/30 md:block">{deviceLine}</p>

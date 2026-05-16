@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { CACHE_PRIVATE_300 } from "@/lib/spotify/cacheHeaders";
 import {
   searchSpotify,
   SpotifyHttpError,
@@ -25,6 +26,12 @@ export async function GET(request: NextRequest) {
   if (!q) {
     return NextResponse.json({ error: "Missing q" }, { status: 400 });
   }
+  if (q.length < 3) {
+    return NextResponse.json(
+      { error: "Query must be at least 3 characters" },
+      { status: 400 },
+    );
+  }
 
   const rawLimit = searchParams.get("limit");
   let limit = rawLimit ? Number.parseInt(rawLimit, 10) : 10;
@@ -35,7 +42,10 @@ export async function GET(request: NextRequest) {
 
   try {
     const results = await searchSpotify(q, types, limit);
-    return NextResponse.json({ results });
+    return NextResponse.json(
+      { results },
+      { headers: { "Cache-Control": CACHE_PRIVATE_300 } },
+    );
   } catch (e) {
     if (e instanceof SpotifyHttpError) {
       return NextResponse.json(

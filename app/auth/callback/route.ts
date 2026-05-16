@@ -33,6 +33,9 @@ export async function GET(request: NextRequest) {
     if (!error) {
       return response;
     }
+
+    const reason = encodeURIComponent(error.message);
+    return NextResponse.redirect(`${origin}/?error=auth&reason=${reason}`);
   }
 
   return NextResponse.redirect(`${origin}/?error=auth`);

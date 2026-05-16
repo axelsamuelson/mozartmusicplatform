@@ -1,5 +1,4 @@
 import type { ItemType } from "@/lib/spotify/api";
-import { fetchActivePlaybackDeviceId } from "@/lib/spotify/currentlyPlaying";
 
 /** Spotify Web Playback SDK (subset). */
 export interface SpotifyWebPlaybackTrack {
@@ -158,11 +157,15 @@ async function readSpotifyFailDetail(res: Response): Promise<string> {
   }
 }
 
-/** True when Spotify’s active device is this tab’s Web Playback SDK device. */
-async function isWamSdkActiveOnDevice(token: string): Promise<boolean> {
+/** True when this tab’s Web Playback SDK has an active player state (no GET /me/player). */
+async function isWamSdkActiveOnDevice(): Promise<boolean> {
   if (!innerPlayer || !playbackDeviceId) return false;
-  const active = await fetchActivePlaybackDeviceId(token);
-  return active != null && active === playbackDeviceId;
+  try {
+    const state = await innerPlayer.getCurrentState();
+    return state !== null;
+  } catch {
+    return false;
+  }
 }
 
 /** Spotify docs often say 204; some responses use 200 with an empty or non-JSON body. */
@@ -469,7 +472,7 @@ export async function play(spotifyUri: string): Promise<void> {
 
 export async function pause(): Promise<void> {
   const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice(token))) {
+  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
     await innerPlayer.pause();
     return;
   }
@@ -478,7 +481,7 @@ export async function pause(): Promise<void> {
 
 export async function resume(): Promise<void> {
   const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice(token))) {
+  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
     const player = await ensurePlayer();
     await player.resume();
     return;
@@ -488,7 +491,7 @@ export async function resume(): Promise<void> {
 
 export async function next(): Promise<void> {
   const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice(token))) {
+  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
     const player = await ensurePlayer();
     await player.nextTrack();
     return;
@@ -498,7 +501,7 @@ export async function next(): Promise<void> {
 
 export async function previous(): Promise<void> {
   const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice(token))) {
+  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
     const player = await ensurePlayer();
     await player.previousTrack();
     return;
@@ -508,7 +511,7 @@ export async function previous(): Promise<void> {
 
 export async function seek(ms: number): Promise<void> {
   const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice(token))) {
+  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
     const player = await ensurePlayer();
     await player.seek(ms);
     return;

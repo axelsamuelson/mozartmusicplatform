@@ -43,12 +43,12 @@ export default function SearchPage() {
   }, []);
 
   useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(query.trim()), 300);
+    const id = window.setTimeout(() => setDebounced(query.trim()), 600);
     return () => window.clearTimeout(id);
   }, [query]);
 
   useEffect(() => {
-    if (!debounced) {
+    if (!debounced || debounced.length < 3) {
       setResults([]);
       setError(null);
       setLoading(false);

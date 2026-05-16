@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 
+import { CACHE_PRIVATE_3600 } from "@/lib/spotify/cacheHeaders";
 import { fetchSpotifyItem, SpotifyHttpError, type ItemType } from "@/lib/spotify/api";
 import { createClient } from "@/lib/supabase/server";
 
@@ -67,5 +68,8 @@ export async function GET(
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  return NextResponse.json({ item: data });
+  return NextResponse.json(
+    { item: data },
+    { headers: { "Cache-Control": CACHE_PRIVATE_3600 } },
+  );
 }

@@ -5,8 +5,16 @@ import { redirect } from "next/navigation";
 
 import { createClient } from "@/lib/supabase/server";
 
-const SPOTIFY_SCOPES =
-  "user-read-private user-read-email playlist-read-private playlist-modify-public playlist-modify-private streaming user-read-playback-state user-modify-playback-state user-read-currently-playing";
+/**
+ * Extra scopes for Premium playback — only via upgradeSpotifyPlayback().
+ * Login uses Supabase defaults (user-read-email) to avoid scope conflicts on /me.
+ *
+ * Also add these in Supabase Dashboard → Auth → Providers → Spotify → Scopes
+ * (comma-separated):
+ * user-read-private,playlist-read-private,playlist-modify-public,playlist-modify-private,streaming,user-read-playback-state,user-modify-playback-state,user-read-currently-playing
+ */
+const SPOTIFY_EXTRA_SCOPES =
+  "user-read-private playlist-read-private playlist-modify-public playlist-modify-private streaming user-read-playback-state user-modify-playback-state user-read-currently-playing";
 
 async function appOrigin(): Promise<string> {
   const fromEnv = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "");
@@ -19,7 +27,7 @@ async function appOrigin(): Promise<string> {
   return `${proto}://${host}`;
 }
 
-export async function signInWithSpotify() {
+async function startSpotifyOAuth(scopes?: string) {
   const supabase = await createClient();
   const base = await appOrigin();
 
@@ -27,7 +35,8 @@ export async function signInWithSpotify() {
     provider: "spotify",
     options: {
       redirectTo: `${base}/auth/callback`,
-      scopes: SPOTIFY_SCOPES,
+      ...(scopes ? { scopes } : {}),
+      queryParams: { show_dialog: "true" },
     },
   });
 
@@ -36,4 +45,14 @@ export async function signInWithSpotify() {
   }
 
   redirect(data.url);
+}
+
+/** Minimal OAuth — only Supabase default scopes (user-read-email). Most reliable for /me. */
+export async function signInWithSpotify() {
+  await startSpotifyOAuth();
+}
+
+/** Request playlist + playback scopes (run once after login if player/playlists need it). */
+export async function upgradeSpotifyPlayback() {
+  await startSpotifyOAuth(SPOTIFY_EXTRA_SCOPES);
 }
