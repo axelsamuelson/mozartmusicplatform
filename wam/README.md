@@ -1,5 +1,7 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+The Git repository root is the parent folder **Mozart**; this Next.js app lives in **`wam/`**. On **Vercel**, open **Project → Settings → General → Root Directory**, set it to **`wam`**, save, and trigger a new deployment. If Root Directory stays at the repo root, the deployment can look successful while the site returns **404 NOT_FOUND**.
+
 ## Getting Started
 
 First, run the development server:
