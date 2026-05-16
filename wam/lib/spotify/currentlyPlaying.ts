@@ -1,0 +1,279 @@
+/** Spotify GET /v1/me/player — active playback on any device (Web API). */
+
+const ME_PLAYER = "https://api.spotify.com/v1/me/player";
+
+export type SpotifyRepeatState = "off" | "context" | "track";
+
+/** Normalized playback for UI (GET /api/spotify/playback). */
+export type SpotifyCurrentPlayback = {
+  isPlaying: boolean;
+  /** Spotify item id (track or episode). */
+  trackId: string;
+  itemKind: "track" | "episode";
+  trackName: string;
+  artistName: string;
+  albumName: string;
+  imageUrl: string;
+  progressMs: number;
+  durationMs: number;
+  deviceName: string;
+  deviceType: string;
+  shuffleState: boolean;
+  repeatState: SpotifyRepeatState;
+  contextType: string | null;
+  contextUri: string | null;
+  contextName: string | null;
+};
+
+/** GET /api/spotify/playback JSON body. */
+export type SpotifyPlaybackApiResponse = SpotifyCurrentPlayback | { isPlaying: false };
+
+function normalizeRepeat(s: unknown): SpotifyRepeatState {
+  if (s === "context" || s === "track" || s === "off") return s;
+  return "off";
+}
+
+function pickImage(urls: { url?: string }[] | undefined): string {
+  const u = urls?.[0]?.url;
+  return typeof u === "string" && u.length > 0 ? u : "";
+}
+
+type MePlayerJson = {
+  is_playing?: boolean;
+  progress_ms?: number;
+  shuffle_state?: boolean;
+  repeat_state?: string;
+  timestamp?: number;
+  device?: { id?: string; name?: string; type?: string } | null;
+  context?: { type?: string; uri?: string | null } | null;
+  item?: Record<string, unknown> | null;
+};
+
+function itemType(item: Record<string, unknown> | null | undefined): string | undefined {
+  if (!item || typeof item !== "object") return undefined;
+  const t = item.type;
+  return typeof t === "string" ? t : undefined;
+}
+
+function parseTrackLikeItem(item: Record<string, unknown>): Omit<
+  SpotifyCurrentPlayback,
+  | "isPlaying"
+  | "itemKind"
+  | "shuffleState"
+  | "repeatState"
+  | "contextType"
+  | "contextUri"
+  | "contextName"
+  | "deviceName"
+  | "deviceType"
+> {
+  const id = typeof item.id === "string" ? item.id : "";
+  const name = typeof item.name === "string" ? item.name : "Unknown";
+
+  const artists = Array.isArray(item.artists)
+    ? (item.artists as { name?: string }[])
+        .map((a) => (typeof a?.name === "string" ? a.name : ""))
+        .filter(Boolean)
+        .join(", ")
+    : "";
+
+  const album = item.album && typeof item.album === "object" ? (item.album as Record<string, unknown>) : null;
+  const albumName =
+    album && typeof album.name === "string" ? album.name : "";
+  const images =
+    album && Array.isArray(album.images)
+      ? (album.images as { url?: string }[])
+      : undefined;
+
+  const duration =
+    typeof item.duration_ms === "number" && Number.isFinite(item.duration_ms)
+      ? item.duration_ms
+      : 0;
+
+  return {
+    trackId: id,
+    trackName: name,
+    artistName: artists || "—",
+    albumName: albumName || "—",
+    imageUrl: pickImage(images),
+    progressMs: 0,
+    durationMs: duration,
+  };
+}
+
+function parseEpisodeItem(item: Record<string, unknown>): Omit<
+  SpotifyCurrentPlayback,
+  | "isPlaying"
+  | "itemKind"
+  | "shuffleState"
+  | "repeatState"
+  | "contextType"
+  | "contextUri"
+  | "contextName"
+  | "deviceName"
+  | "deviceType"
+> {
+  const id = typeof item.id === "string" ? item.id : "";
+  const name = typeof item.name === "string" ? item.name : "Unknown";
+  const show =
+    item.show && typeof item.show === "object" ? (item.show as Record<string, unknown>) : null;
+  const showName = show && typeof show.name === "string" ? show.name : "Podcast";
+  const publisher =
+    show && typeof show.publisher === "string" ? show.publisher : "";
+  const showImages =
+    show && Array.isArray(show.images) ? (show.images as { url?: string }[]) : undefined;
+  const epImages = Array.isArray(item.images) ? (item.images as { url?: string }[]) : undefined;
+  const duration =
+    typeof item.duration_ms === "number" && Number.isFinite(item.duration_ms)
+      ? item.duration_ms
+      : 0;
+
+  return {
+    trackId: id,
+    trackName: name,
+    artistName: showName,
+    albumName: publisher || "—",
+    imageUrl: pickImage(epImages) || pickImage(showImages),
+    progressMs: 0,
+    durationMs: duration,
+  };
+}
+
+/** Active device id from GET /v1/me/player (200 only). */
+export async function fetchActivePlaybackDeviceId(
+  accessToken: string,
+): Promise<string | null> {
+  const res = await fetch(ME_PLAYER, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+  if (res.status !== 200) return null;
+  const text = await res.text();
+  if (!text) return null;
+  let j: MePlayerJson;
+  try {
+    j = JSON.parse(text) as MePlayerJson;
+  } catch {
+    return null;
+  }
+  const id = j.device?.id;
+  return typeof id === "string" && id.length > 0 ? id : null;
+}
+
+export function playlistIdFromContextUri(uri: string | null): string | null {
+  if (!uri || typeof uri !== "string") return null;
+  const m = uri.match(/^spotify:playlist:(.+)$/);
+  return m?.[1] ?? null;
+}
+
+const PLAYLIST_NAME_CACHE_TTL_MS = 600_000;
+const playlistNameCache = new Map<string, { name: string; ts: number }>();
+
+export async function fetchSpotifyPlaylistName(
+  accessToken: string,
+  playlistId: string,
+): Promise<string | null> {
+  const now = Date.now();
+  const hit = playlistNameCache.get(playlistId);
+  if (hit && now - hit.ts < PLAYLIST_NAME_CACHE_TTL_MS) {
+    return hit.name;
+  }
+
+  const res = await fetch(
+    `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}?fields=name`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) return null;
+  try {
+    const j = (await res.json()) as { name?: string };
+    const name = typeof j.name === "string" ? j.name : null;
+    if (name && name.length > 0) {
+      playlistNameCache.set(playlistId, { name, ts: now });
+    }
+    return name;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * GET /v1/me/player — full playback state or null when nothing is playing / no player.
+ * Does not resolve playlist display name; use `fetchSpotifyPlaylistName` in the route.
+ */
+export async function fetchCurrentPlayback(
+  accessToken: string,
+): Promise<SpotifyCurrentPlayback | null> {
+  const res = await fetch(ME_PLAYER, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    cache: "no-store",
+  });
+
+  if (res.status === 204 || res.status === 202) return null;
+  if (res.status === 404) return null;
+
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Spotify API ${res.status}: ${t.slice(0, 400)}`);
+  }
+
+  const text = await res.text();
+  if (!text) return null;
+
+  let data: MePlayerJson;
+  try {
+    data = JSON.parse(text) as MePlayerJson;
+  } catch {
+    throw new Error("Spotify API 200: invalid JSON for /me/player");
+  }
+
+  const itemRaw = data.item;
+  const item =
+    itemRaw && typeof itemRaw === "object"
+      ? (itemRaw as Record<string, unknown>)
+      : null;
+  if (!item) return null;
+
+  const itype = itemType(item);
+  const isEpisode = itype === "episode";
+  const base = isEpisode ? parseEpisodeItem(item) : parseTrackLikeItem(item);
+
+  const progressMs =
+    typeof data.progress_ms === "number" && Number.isFinite(data.progress_ms)
+      ? Math.max(0, data.progress_ms)
+      : 0;
+
+  const device = data.device;
+  const deviceName =
+    device && typeof device.name === "string" && device.name.length > 0
+      ? device.name
+      : "Unknown device";
+  const deviceType =
+    device && typeof device.type === "string" && device.type.length > 0
+      ? device.type
+      : "unknown";
+
+  const ctx = data.context;
+  const contextType =
+    ctx && typeof ctx.type === "string" && ctx.type.length > 0 ? ctx.type : null;
+  const contextUri =
+    ctx && typeof ctx.uri === "string" && ctx.uri.length > 0 ? ctx.uri : null;
+
+  const isPlaying = Boolean(data.is_playing);
+
+  return {
+    isPlaying,
+    ...base,
+    itemKind: isEpisode ? "episode" : "track",
+    progressMs,
+    shuffleState: Boolean(data.shuffle_state),
+    repeatState: normalizeRepeat(data.repeat_state),
+    contextType,
+    contextUri,
+    contextName: null,
+    deviceName,
+    deviceType,
+  };
+}
