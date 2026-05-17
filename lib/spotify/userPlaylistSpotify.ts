@@ -1,6 +1,7 @@
 /** Spotify Web API calls with a user OAuth access token (e.g. provider_token). */
 
 import { parseRetryAfterSec, SpotifyApiError } from "@/lib/spotify/errors";
+import { assertSpotifyCircuitAvailable } from "@/lib/spotify/rateLimiter";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -152,6 +153,7 @@ async function spotifyJson<T>(
 }
 
 export async function getSpotifyCurrentUserId(accessToken: string): Promise<string> {
+  assertSpotifyCircuitAvailable();
   const me = await spotifyJson<{ id: string }>(
     accessToken,
     "https://api.spotify.com/v1/me",
@@ -165,6 +167,7 @@ export async function createSpotifyPlaylist(
   name: string,
   description?: string | null,
 ): Promise<{ id: string }> {
+  assertSpotifyCircuitAvailable();
   return spotifyJsonWithRetry<{ id: string }>(
     accessToken,
     "https://api.spotify.com/v1/me/playlists",
@@ -192,6 +195,7 @@ export async function replacePlaylistTracks(
   playlistId: string,
   uris: string[],
 ): Promise<void> {
+  assertSpotifyCircuitAvailable();
   const base = `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/tracks`;
 
   if (uris.length === 0) {
@@ -250,6 +254,7 @@ export async function unfollowSpotifyPlaylist(
   accessToken: string,
   playlistId: string,
 ): Promise<void> {
+  assertSpotifyCircuitAvailable();
   const res = await fetch(
     `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/followers`,
     {

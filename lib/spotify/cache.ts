@@ -7,6 +7,7 @@ import {
   recordSpotify429,
   recordSpotifySuccess,
   shouldBlockSpotifyRequests,
+  SPOTIFY_CIRCUIT_OPEN_ERROR,
 } from "@/lib/spotify/rateLimiter";
 
 /** Recommended TTLs (seconds) per data type. */
@@ -99,18 +100,9 @@ export async function cachedSpotifyRequest<T>(
   fetcher: () => Promise<T>,
   options?: CachedSpotifyRequestOptions,
 ): Promise<T> {
-  if (options?.bypass) {
-    logCache("MISS", `${key} (bypass)`);
-    const data = await fetcher();
-    if (ttlSeconds > 0) {
-      await writeCacheRow(key, data, ttlSeconds);
-    }
-    recordSpotifySuccess();
-    return data;
-  }
-
   const existing = await readCacheRow(key);
-  if (existing && isFresh(existing)) {
+
+  if (!options?.bypass && existing && isFresh(existing)) {
     logCache("HIT", key);
     return existing.data as T;
   }
@@ -120,7 +112,7 @@ export async function cachedSpotifyRequest<T>(
       logCache("CIRCUIT", `${key} (stale)`);
       return existing.data as T;
     }
-    throw new Error("SPOTIFY_CIRCUIT_OPEN_NO_CACHE");
+    throw new Error(SPOTIFY_CIRCUIT_OPEN_ERROR);
   }
 
   const canProbe = beginSpotifyHalfOpenProbe();
@@ -129,11 +121,11 @@ export async function cachedSpotifyRequest<T>(
       logCache("CIRCUIT", `${key} (stale-half-open)`);
       return existing.data as T;
     }
-    throw new Error("SPOTIFY_CIRCUIT_OPEN_NO_CACHE");
+    throw new Error(SPOTIFY_CIRCUIT_OPEN_ERROR);
   }
 
   try {
-    logCache("MISS", key);
+    logCache("MISS", options?.bypass ? `${key} (bypass)` : key);
     const data = await fetcher();
     recordSpotifySuccess();
     if (ttlSeconds > 0) {

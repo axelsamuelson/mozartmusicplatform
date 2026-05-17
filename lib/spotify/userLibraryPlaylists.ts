@@ -1,7 +1,10 @@
 /** Spotify Web API: current user’s playlists (owned only) and playlist item stats (user OAuth token). */
 
 import { parseRetryAfterSec } from "@/lib/spotify/errors";
-import { recordSpotify429 } from "@/lib/spotify/rateLimiter";
+import {
+  isSpotifyCircuitOpen,
+  recordSpotify429,
+} from "@/lib/spotify/rateLimiter";
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -9,7 +12,11 @@ function delay(ms: number): Promise<void> {
 
 /** GET with 429 backoff (Retry-After or exponential) to avoid failing the whole library load. */
 async function spotifyGetJson<T>(accessToken: string, url: string): Promise<T> {
-  const maxAttempts = 5;
+  if (isSpotifyCircuitOpen()) {
+    throw new Error("Spotify API 429: circuit open");
+  }
+
+  const maxAttempts = 2;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${accessToken}` },

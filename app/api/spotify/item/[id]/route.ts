@@ -12,7 +12,10 @@ import {
   type CachedItemPayload,
   type ItemType,
 } from "@/lib/spotify/api";
-import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
+import {
+  isSpotifyCircuitOpen,
+  SPOTIFY_CIRCUIT_OPEN_ERROR,
+} from "@/lib/spotify/rateLimiter";
 import { createClient } from "@/lib/supabase/server";
 
 const ALLOWED: ItemType[] = ["track", "album", "artist"];
@@ -67,7 +70,9 @@ export async function GET(
   } catch (e) {
     if (
       e instanceof Error &&
-      (e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE" || isSpotifyCircuitOpen())
+      (e.message === SPOTIFY_CIRCUIT_OPEN_ERROR ||
+        e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE" ||
+        isSpotifyCircuitOpen())
     ) {
       const stalePayload = await getStaleSpotifyCache<CachedItemPayload>(
         cacheKey,

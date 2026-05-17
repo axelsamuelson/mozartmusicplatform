@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { ratingMatchesPlaylistFilters } from "@/lib/playlist/matchRating";
 import { loadAllUserRatings } from "@/lib/ratings/normalize";
 import { assertWamOwned } from "@/lib/spotify/playlistGuard";
+import { SPOTIFY_CIRCUIT_UNAVAILABLE_MSG } from "@/lib/spotify/rateLimiter";
 import { unfollowSpotifyPlaylist } from "@/lib/spotify/userPlaylistSpotify";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
@@ -133,6 +134,9 @@ export async function DELETE(
     await unfollowSpotifyPlaylist(accessToken, pl.spotify_playlist_id);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Spotify unfollow failed";
+    if (msg === SPOTIFY_CIRCUIT_UNAVAILABLE_MSG) {
+      return NextResponse.json({ error: msg }, { status: 503 });
+    }
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 

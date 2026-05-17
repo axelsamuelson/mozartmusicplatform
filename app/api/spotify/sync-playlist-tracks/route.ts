@@ -7,7 +7,10 @@ import {
 } from "@/lib/spotify/cache";
 import { fetchSpotifyPlaylistMeta } from "@/lib/spotify/currentlyPlaying";
 import { SpotifyApiError } from "@/lib/spotify/errors";
-import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
+import {
+  isSpotifyCircuitOpen,
+  SPOTIFY_CIRCUIT_OPEN_ERROR,
+} from "@/lib/spotify/rateLimiter";
 import {
   loadUserPlaylistTracksMap,
   statsFromTrackIds,
@@ -104,7 +107,6 @@ export async function POST(request: NextRequest) {
     }
 
     const tracksCacheKey = `playlist-tracks:${playlistId}`;
-    const metaCacheKey = `playlist-meta:${playlistId}`;
 
     const [{ total_tracks, trackRowIds }, playlistMeta] = await Promise.all([
       cachedSpotifyRequest(
@@ -113,12 +115,9 @@ export async function POST(request: NextRequest) {
         () => fetchPlaylistTrackStats(accessToken, playlistId),
         { bypass: force },
       ),
-      cachedSpotifyRequest(
-        metaCacheKey,
-        SPOTIFY_CACHE_TTL.playlistMeta,
-        () => fetchSpotifyPlaylistMeta(accessToken, playlistId),
-        { bypass: force },
-      ),
+      fetchSpotifyPlaylistMeta(accessToken, playlistId, {
+        bypassCache: force,
+      }),
     ]);
 
     await upsertPlaylistTracks(
@@ -171,7 +170,8 @@ export async function POST(request: NextRequest) {
 
     if (
       e instanceof Error &&
-      e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE"
+      (e.message === SPOTIFY_CIRCUIT_OPEN_ERROR ||
+        e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE")
     ) {
       const tracksMap = await loadUserPlaylistTracksMap(supabase, user.id);
       const row = tracksMap.get(playlistId);

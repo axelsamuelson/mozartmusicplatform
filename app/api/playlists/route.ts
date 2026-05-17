@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { SpotifyApiError } from "@/lib/spotify/errors";
+import { SPOTIFY_CIRCUIT_UNAVAILABLE_MSG } from "@/lib/spotify/rateLimiter";
 import { createSpotifyPlaylist } from "@/lib/spotify/userPlaylistSpotify";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
@@ -154,6 +155,10 @@ export async function POST(request: NextRequest) {
       );
       playlistId = created.id;
     } catch (e) {
+      const msg = e instanceof Error ? e.message : "Spotify error";
+      if (msg === SPOTIFY_CIRCUIT_UNAVAILABLE_MSG) {
+        return NextResponse.json({ error: msg }, { status: 503 });
+      }
       if (e instanceof SpotifyApiError && e.status === 429) {
         console.log("Step 3: Spotify 429", { retryAfter: e.retryAfterSec });
         return NextResponse.json(
@@ -161,7 +166,6 @@ export async function POST(request: NextRequest) {
           { status: 429 },
         );
       }
-      const msg = e instanceof Error ? e.message : "Spotify error";
       console.log("Step 3: Spotify create failed", { msg });
       if (msg.includes("timeout")) {
         return NextResponse.json(

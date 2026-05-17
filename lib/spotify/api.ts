@@ -1,4 +1,3 @@
-import { recordSpotify429 } from "@/lib/spotify/rateLimiter";
 import { getSpotifyToken } from "@/lib/spotify/token";
 
 const API_BASE = "https://api.spotify.com/v1";
@@ -152,7 +151,6 @@ export async function searchSpotify(
   });
 
   if (!res.ok) {
-    if (res.status === 429) recordSpotify429();
     throw new SpotifyHttpError(
       res.status,
       (await res.text()).slice(0, 200) || "Spotify search failed",
@@ -213,7 +211,6 @@ export async function fetchSpotifyItem(
   });
 
   if (!res.ok) {
-    if (res.status === 429) recordSpotify429();
     throw new SpotifyHttpError(
       res.status,
       (await res.text()).slice(0, 200) || `${segment} fetch failed`,

@@ -155,6 +155,13 @@ export default function PlaylistsPage() {
         toast.loading("Creating playlist on Spotify…", { id: loadingToastId });
       }
 
+      if (res.status === 503) {
+        toast.error(
+          body.error ||
+            "Spotify temporarily unavailable — try again in a few minutes",
+        );
+        return;
+      }
       if (!res.ok) throw new Error(body.error || res.statusText);
       if (body.playlist) {
         setPlaylists((prev) => [body.playlist!, ...prev]);

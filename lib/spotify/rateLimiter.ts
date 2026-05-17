@@ -85,6 +85,18 @@ export function recordSpotifySuccess(): void {
   }
 }
 
+export const SPOTIFY_CIRCUIT_UNAVAILABLE_MSG =
+  "Spotify temporarily unavailable — try again in a few minutes";
+
+export const SPOTIFY_CIRCUIT_OPEN_ERROR = "Circuit open — Spotify unavailable";
+
+/** Throws when the circuit breaker blocks outbound Spotify API calls. */
+export function assertSpotifyCircuitAvailable(): void {
+  if (isSpotifyCircuitOpen()) {
+    throw new Error(SPOTIFY_CIRCUIT_UNAVAILABLE_MSG);
+  }
+}
+
 export function isSpotify429Error(error: unknown): boolean {
   if (error instanceof SpotifyHttpError) return error.status === 429;
   if (error instanceof SpotifyApiError) return error.status === 429;

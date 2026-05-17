@@ -12,7 +12,10 @@ import {
   type ItemType,
   type SpotifySearchRow,
 } from "@/lib/spotify/api";
-import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
+import {
+  isSpotifyCircuitOpen,
+  SPOTIFY_CIRCUIT_OPEN_ERROR,
+} from "@/lib/spotify/rateLimiter";
 
 const ALLOWED: ItemType[] = ["track", "album", "artist"];
 
@@ -61,7 +64,9 @@ export async function GET(request: NextRequest) {
   } catch (e) {
     if (
       e instanceof Error &&
-      (e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE" || isSpotifyCircuitOpen())
+      (e.message === SPOTIFY_CIRCUIT_OPEN_ERROR ||
+        e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE" ||
+        isSpotifyCircuitOpen())
     ) {
       const stale = await getStaleSpotifyCache<SpotifySearchRow[]>(
         cacheKey,

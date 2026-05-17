@@ -1,7 +1,10 @@
 /** Spotify GET /v1/me/player — active playback on any device (Web API). */
 
+import {
+  cachedSpotifyRequest,
+  SPOTIFY_CACHE_TTL,
+} from "@/lib/spotify/cache";
 import { parseRetryAfterSec, SpotifyApiError } from "@/lib/spotify/errors";
-import { recordSpotify429 } from "@/lib/spotify/rateLimiter";
 
 const ME_PLAYER = "https://api.spotify.com/v1/me/player";
 
@@ -146,65 +149,21 @@ function parseEpisodeItem(item: Record<string, unknown>): Omit<
   };
 }
 
-/** Active device id from GET /v1/me/player (200 only). */
-export async function fetchActivePlaybackDeviceId(
-  accessToken: string,
-): Promise<string | null> {
-  const res = await fetch(ME_PLAYER, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    cache: "no-store",
-  });
-  if (res.status !== 200) return null;
-  const text = await res.text();
-  if (!text) return null;
-  let j: MePlayerJson;
-  try {
-    j = JSON.parse(text) as MePlayerJson;
-  } catch {
-    return null;
-  }
-  const id = j.device?.id;
-  return typeof id === "string" && id.length > 0 ? id : null;
-}
-
 export function playlistIdFromContextUri(uri: string | null): string | null {
   if (!uri || typeof uri !== "string") return null;
   const m = uri.match(/^spotify:playlist:(.+)$/);
   return m?.[1] ?? null;
 }
 
-const PLAYLIST_META_CACHE_TTL_MS = 600_000;
-const playlistMetaCache = new Map<
-  string,
-  { name: string; imageUrl: string | null; ts: number }
->();
-
 export type SpotifyPlaylistMeta = {
   name: string | null;
   imageUrl: string | null;
 };
 
-/** Cached playlist title only — never calls Spotify. */
-export function getCachedSpotifyPlaylistName(playlistId: string): string | null {
-  const hit = playlistMetaCache.get(playlistId);
-  if (!hit) return null;
-  if (Date.now() - hit.ts >= PLAYLIST_META_CACHE_TTL_MS) {
-    playlistMetaCache.delete(playlistId);
-    return null;
-  }
-  return hit.name;
-}
-
-export async function fetchSpotifyPlaylistMeta(
+async function fetchSpotifyPlaylistMetaFromApi(
   accessToken: string,
   playlistId: string,
 ): Promise<SpotifyPlaylistMeta> {
-  const now = Date.now();
-  const hit = playlistMetaCache.get(playlistId);
-  if (hit && now - hit.ts < PLAYLIST_META_CACHE_TTL_MS) {
-    return { name: hit.name, imageUrl: hit.imageUrl };
-  }
-
   const res = await fetch(
     `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}?fields=name,images`,
     {
@@ -221,13 +180,23 @@ export async function fetchSpotifyPlaylistMeta(
     const name =
       typeof j.name === "string" && j.name.length > 0 ? j.name : null;
     const imageUrl = pickImage(j.images);
-    if (name) {
-      playlistMetaCache.set(playlistId, { name, imageUrl, ts: now });
-    }
     return { name, imageUrl: imageUrl || null };
   } catch {
     return { name: null, imageUrl: null };
   }
+}
+
+export async function fetchSpotifyPlaylistMeta(
+  accessToken: string,
+  playlistId: string,
+  options?: { bypassCache?: boolean },
+): Promise<SpotifyPlaylistMeta> {
+  return cachedSpotifyRequest(
+    `playlist-meta:${playlistId}`,
+    SPOTIFY_CACHE_TTL.playlistMeta,
+    () => fetchSpotifyPlaylistMetaFromApi(accessToken, playlistId),
+    { bypass: options?.bypassCache },
+  );
 }
 
 export async function fetchSpotifyPlaylistName(
@@ -255,7 +224,6 @@ export async function fetchCurrentPlayback(
 
   if (!res.ok) {
     const t = await res.text();
-    if (res.status === 429) recordSpotify429();
     throw new SpotifyApiError(
       res.status,
       t,

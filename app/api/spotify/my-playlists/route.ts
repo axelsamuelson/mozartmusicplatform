@@ -15,7 +15,10 @@ import {
   type SpotifyMyPlaylistSummary,
 } from "@/lib/spotify/userLibraryPlaylists";
 import type { SpotifyPlaylistListItem } from "@/lib/types/spotifyLibrary";
-import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
+import {
+  isSpotifyCircuitOpen,
+  SPOTIFY_CIRCUIT_OPEN_ERROR,
+} from "@/lib/spotify/rateLimiter";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 
@@ -57,7 +60,9 @@ export async function GET() {
   } catch (e) {
     if (
       e instanceof Error &&
-      (e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE" || isSpotifyCircuitOpen())
+      (e.message === SPOTIFY_CIRCUIT_OPEN_ERROR ||
+        e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE" ||
+        isSpotifyCircuitOpen())
     ) {
       const stale = await getStaleSpotifyCache<SpotifyMyPlaylistSummary[]>(
         cacheKey,

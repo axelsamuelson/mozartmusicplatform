@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { ratingMatchesPlaylistFilters, trackUrisFromRatings } from "@/lib/playlist/matchRating";
 import { loadAllUserRatings } from "@/lib/ratings/normalize";
 import { assertWamOwned } from "@/lib/spotify/playlistGuard";
+import { SPOTIFY_CIRCUIT_UNAVAILABLE_MSG } from "@/lib/spotify/rateLimiter";
 import { replacePlaylistTracks } from "@/lib/spotify/userPlaylistSpotify";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
@@ -88,6 +89,9 @@ export async function POST(
     await replacePlaylistTracks(accessToken, pl.spotify_playlist_id, uris);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Sync failed";
+    if (msg === SPOTIFY_CIRCUIT_UNAVAILABLE_MSG) {
+      return NextResponse.json({ error: msg }, { status: 503 });
+    }
     return NextResponse.json({ error: msg }, { status: 502 });
   }
 

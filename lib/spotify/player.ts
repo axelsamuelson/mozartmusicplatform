@@ -353,16 +353,24 @@ async function fetchDevices(token: string): Promise<SpotifyDevice[]> {
   return data.devices ?? [];
 }
 
+const DEVICE_VISIBILITY_MAX_ATTEMPTS = 10;
+const DEVICE_VISIBILITY_POLL_MS = 1500;
+
 /** Web API may lag behind SDK `ready`; poll until this device id appears. */
 async function waitUntilDeviceVisible(
   deviceId: string,
   token: string,
 ): Promise<void> {
-  const deadline = Date.now() + 25000;
-  while (Date.now() < deadline) {
+  if (playbackDeviceId === deviceId && innerPlayer) {
+    return;
+  }
+
+  for (let attempt = 0; attempt < DEVICE_VISIBILITY_MAX_ATTEMPTS; attempt++) {
     const devices = await fetchDevices(token);
     if (devices.some((d) => d.id === deviceId)) return;
-    await new Promise((r) => setTimeout(r, 400));
+    if (attempt < DEVICE_VISIBILITY_MAX_ATTEMPTS - 1) {
+      await new Promise((r) => setTimeout(r, DEVICE_VISIBILITY_POLL_MS));
+    }
   }
   throw new Error(
     "This browser player is not visible to Spotify yet. Wait a few seconds and try again.",

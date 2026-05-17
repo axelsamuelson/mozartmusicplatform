@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
 import { PlaylistsSubnav } from "@/components/PlaylistsSubnav";
 import { Button } from "@/components/ui/button";
@@ -13,6 +14,7 @@ import { cn } from "@/lib/utils";
 type SortKey = "name" | "rated_percent" | "total_tracks";
 
 const MAX_PARALLEL_SYNCS = 1;
+const MAX_SYNC_ATTEMPTS = 2;
 
 type SyncJob = {
   playlistId: string;
@@ -54,11 +56,12 @@ function spotifyPlaylistUrl(id: string): string {
 type PlaylistCardProps = {
   playlist: SpotifyPlaylistListItem;
   syncing: boolean;
+  syncFailed: boolean;
 };
 
-function SpotifyPlaylistCard({ playlist, syncing }: PlaylistCardProps) {
+function SpotifyPlaylistCard({ playlist, syncing, syncFailed }: PlaylistCardProps) {
   const hasStats = playlist.rated_count !== null;
-  const showSkeleton = playlist.missing_tracks_cache || syncing;
+  const showSkeleton = (playlist.missing_tracks_cache || syncing) && !syncFailed;
   const ratedPercent = playlist.rated_percent ?? 0;
   const ratedCount = playlist.rated_count ?? 0;
   const total = playlist.total_tracks;
@@ -71,6 +74,7 @@ function SpotifyPlaylistCard({ playlist, syncing }: PlaylistCardProps) {
       className={cn(
         glassCard,
         "group block transition-all duration-300 hover:border-white/[0.12] hover:bg-white/[0.07]",
+        syncFailed && "border-red-500/30",
       )}
     >
       <div className="flex gap-4">
@@ -105,7 +109,9 @@ function SpotifyPlaylistCard({ playlist, syncing }: PlaylistCardProps) {
             )}
           </div>
           <p className="mt-2 text-xs text-white/55">
-            {showSkeleton ? (
+            {syncFailed ? (
+              <span className="text-red-400/90">Sync failed — use Sync all to retry</span>
+            ) : showSkeleton ? (
               <span className="inline-flex items-center gap-2 text-white/45">
                 <span
                   className="size-3 shrink-0 animate-spin rounded-full border-2 border-white/20 border-t-wam"
@@ -134,16 +140,28 @@ export default function SpotifyLibraryPlaylistsPage() {
   const [error, setError] = useState<string | null>(null);
   const [sort, setSort] = useState<SortKey>("name");
   const [syncingIds, setSyncingIds] = useState<Set<string>>(() => new Set());
+  const [syncFailedIds, setSyncFailedIds] = useState<Set<string>>(() => new Set());
   const [syncAllRunning, setSyncAllRunning] = useState(false);
 
   const syncQueueRef = useRef<SyncJob[]>([]);
   const activeSyncsRef = useRef(0);
   const syncingIdsRef = useRef<Set<string>>(new Set());
+  const syncFailedIdsRef = useRef<Set<string>>(new Set());
   const itemsRef = useRef<SpotifyPlaylistListItem[] | null>(null);
 
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+
+  const markSyncFailed = useCallback((playlistId: string) => {
+    syncFailedIdsRef.current.add(playlistId);
+    setSyncFailedIds(new Set(syncFailedIdsRef.current));
+  }, []);
+
+  const clearSyncFailed = useCallback((playlistId: string) => {
+    syncFailedIdsRef.current.delete(playlistId);
+    setSyncFailedIds(new Set(syncFailedIdsRef.current));
+  }, []);
 
   const applyStatsToPlaylist = useCallback(
     (playlistId: string, stats: {
@@ -152,6 +170,7 @@ export default function SpotifyLibraryPlaylistsPage() {
       rated_percent: number;
       total_tracks: number;
     }) => {
+      clearSyncFailed(playlistId);
       setItems((prev) => {
         if (!prev) return prev;
         return prev.map((pl) =>
@@ -163,49 +182,66 @@ export default function SpotifyLibraryPlaylistsPage() {
                 unrated_count: stats.unrated_count,
                 rated_percent: stats.rated_percent,
                 needs_sync: false,
+                missing_tracks_cache: false,
               }
             : pl,
         );
       });
     },
-    [],
+    [clearSyncFailed],
   );
 
   const runSyncPlaylist = useCallback(
     async (playlistId: string, force = false): Promise<boolean> => {
-      const res = await fetch("/api/spotify/sync-playlist-tracks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playlist_id: playlistId, force }),
-      });
-      const body = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        retryAfter?: number;
-        rated_count?: number;
-        unrated_count?: number;
-        rated_percent?: number;
-        total_tracks?: number;
-      };
+      for (let attempt = 1; attempt <= MAX_SYNC_ATTEMPTS; attempt++) {
+        const res = await fetch("/api/spotify/sync-playlist-tracks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playlist_id: playlistId, force }),
+        });
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          retryAfter?: number;
+          rated_count?: number;
+          unrated_count?: number;
+          rated_percent?: number;
+          total_tracks?: number;
+        };
 
-      if (res.status === 429) {
-        const wait = typeof body.retryAfter === "number" ? body.retryAfter : 30;
-        await new Promise((r) => setTimeout(r, wait * 1000));
-        return runSyncPlaylist(playlistId, force);
+        if (res.status === 429) {
+          if (attempt >= MAX_SYNC_ATTEMPTS) {
+            toast.error("Rate limited — try again in 60s");
+            markSyncFailed(playlistId);
+            return false;
+          }
+          continue;
+        }
+
+        if (!res.ok || typeof body.rated_count !== "number") {
+          if (res.status === 503) {
+            toast.error(
+              body.error ||
+                "Spotify temporarily unavailable — try again in a few minutes",
+            );
+          }
+          markSyncFailed(playlistId);
+          return false;
+        }
+
+        applyStatsToPlaylist(playlistId, {
+          rated_count: body.rated_count,
+          unrated_count: body.unrated_count ?? 0,
+          rated_percent: body.rated_percent ?? 0,
+          total_tracks: body.total_tracks ?? 0,
+        });
+        return true;
       }
 
-      if (!res.ok || typeof body.rated_count !== "number") {
-        return false;
-      }
-
-      applyStatsToPlaylist(playlistId, {
-        rated_count: body.rated_count,
-        unrated_count: body.unrated_count ?? 0,
-        rated_percent: body.rated_percent ?? 0,
-        total_tracks: body.total_tracks ?? 0,
-      });
-      return true;
+      toast.error("Rate limited — try again in 60s");
+      markSyncFailed(playlistId);
+      return false;
     },
-    [applyStatsToPlaylist],
+    [applyStatsToPlaylist, markSyncFailed],
   );
 
   const pumpSyncQueue = useCallback(() => {
@@ -221,7 +257,9 @@ export default function SpotifyLibraryPlaylistsPage() {
       setSyncingIds(new Set(syncingIdsRef.current));
 
       void runSyncPlaylist(job.playlistId, job.force)
-        .catch(() => undefined)
+        .catch(() => {
+          markSyncFailed(job.playlistId);
+        })
         .finally(() => {
           activeSyncsRef.current -= 1;
           syncingIdsRef.current.delete(job.playlistId);
@@ -235,7 +273,7 @@ export default function SpotifyLibraryPlaylistsPage() {
           pumpSyncQueue();
         });
     }
-  }, [runSyncPlaylist]);
+  }, [runSyncPlaylist, markSyncFailed]);
 
   const enqueueSyncs = useCallback(
     (ids: string[], force = false) => {
@@ -246,6 +284,12 @@ export default function SpotifyLibraryPlaylistsPage() {
         (id) => !queued.has(id) && !syncingIdsRef.current.has(id),
       );
       if (unique.length === 0) return;
+
+      if (force) {
+        for (const id of unique) {
+          clearSyncFailed(id);
+        }
+      }
 
       const jobs: SyncJob[] = unique.map((playlistId) => ({
         playlistId,
@@ -259,7 +303,7 @@ export default function SpotifyLibraryPlaylistsPage() {
       }
       pumpSyncQueue();
     },
-    [pumpSyncQueue],
+    [pumpSyncQueue, clearSyncFailed],
   );
 
   const enqueueSyncsRef = useRef(enqueueSyncs);
@@ -371,6 +415,7 @@ export default function SpotifyLibraryPlaylistsPage() {
               <SpotifyPlaylistCard
                 playlist={pl}
                 syncing={syncingIds.has(pl.id)}
+                syncFailed={syncFailedIds.has(pl.id)}
               />
             </li>
           ))}
