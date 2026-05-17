@@ -2,4 +2,5 @@
 export const CACHE_PRIVATE_60 = "private, max-age=60";
 export const CACHE_PRIVATE_300 = "private, max-age=300";
 export const CACHE_PRIVATE_3600 = "private, max-age=3600";
+export const CACHE_PRIVATE_86400 = "private, max-age=86400";
 export const CACHE_NO_STORE = "private, no-store";

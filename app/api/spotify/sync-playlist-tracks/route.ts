@@ -1,13 +1,18 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { loadUserRatedTrackSpotifyIds } from "@/lib/ratings/userRatedTrackIds";
+import {
+  cachedSpotifyRequest,
+  SPOTIFY_CACHE_TTL,
+} from "@/lib/spotify/cache";
+import { fetchSpotifyPlaylistMeta } from "@/lib/spotify/currentlyPlaying";
 import { SpotifyApiError } from "@/lib/spotify/errors";
+import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import {
   loadUserPlaylistTracksMap,
   statsFromTrackIds,
   upsertPlaylistTracks,
 } from "@/lib/spotify/playlistTracksDb";
-import { fetchSpotifyPlaylistMeta } from "@/lib/spotify/currentlyPlaying";
 import { fetchPlaylistTrackStats } from "@/lib/spotify/userLibraryPlaylists";
 import type { SpotifyPlaylistStatsPayload } from "@/lib/types/spotifyLibrary";
 import { createClient } from "@/lib/supabase/server";
@@ -85,9 +90,35 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (isSpotifyCircuitOpen() && cached) {
+      const stats = statsFromTrackIds(
+        cached.track_ids,
+        cached.total_tracks,
+        ratedTrackIds,
+      );
+      return NextResponse.json({
+        playlist_id: playlistId,
+        cached: true,
+        ...stats,
+      });
+    }
+
+    const tracksCacheKey = `playlist-tracks:${playlistId}`;
+    const metaCacheKey = `playlist-meta:${playlistId}`;
+
     const [{ total_tracks, trackRowIds }, playlistMeta] = await Promise.all([
-      fetchPlaylistTrackStats(accessToken, playlistId),
-      fetchSpotifyPlaylistMeta(accessToken, playlistId),
+      cachedSpotifyRequest(
+        tracksCacheKey,
+        SPOTIFY_CACHE_TTL.playlistTracks,
+        () => fetchPlaylistTrackStats(accessToken, playlistId),
+        { bypass: force },
+      ),
+      cachedSpotifyRequest(
+        metaCacheKey,
+        SPOTIFY_CACHE_TTL.playlistMeta,
+        () => fetchSpotifyPlaylistMeta(accessToken, playlistId),
+        { bypass: force },
+      ),
     ]);
 
     await upsertPlaylistTracks(
@@ -111,6 +142,24 @@ export async function POST(request: NextRequest) {
     });
   } catch (e) {
     if (e instanceof SpotifyApiError && e.status === 429) {
+      const tracksMap = await loadUserPlaylistTracksMap(supabase, user.id);
+      const row = tracksMap.get(playlistId);
+      if (row) {
+        const ratedTrackIds = await loadUserRatedTrackSpotifyIds(
+          supabase,
+          user.id,
+        );
+        const stats = statsFromTrackIds(
+          row.track_ids,
+          row.total_tracks,
+          ratedTrackIds,
+        );
+        return NextResponse.json({
+          playlist_id: playlistId,
+          cached: true,
+          ...stats,
+        });
+      }
       return NextResponse.json(
         {
           error: "Rate limited",
@@ -119,6 +168,35 @@ export async function POST(request: NextRequest) {
         { status: 429 },
       );
     }
+
+    if (
+      e instanceof Error &&
+      e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE"
+    ) {
+      const tracksMap = await loadUserPlaylistTracksMap(supabase, user.id);
+      const row = tracksMap.get(playlistId);
+      if (row) {
+        const ratedTrackIds = await loadUserRatedTrackSpotifyIds(
+          supabase,
+          user.id,
+        );
+        const stats = statsFromTrackIds(
+          row.track_ids,
+          row.total_tracks,
+          ratedTrackIds,
+        );
+        return NextResponse.json({
+          playlist_id: playlistId,
+          cached: true,
+          ...stats,
+        });
+      }
+      return NextResponse.json(
+        { error: "Spotify temporarily unavailable" },
+        { status: 503 },
+      );
+    }
+
     const message = e instanceof Error ? e.message : "Sync failed";
     const spotifyStatus = /^Spotify API (\d{3}):/.exec(message)?.[1];
     if (spotifyStatus === "401") {

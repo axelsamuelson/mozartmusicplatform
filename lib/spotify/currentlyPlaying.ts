@@ -1,6 +1,7 @@
 /** Spotify GET /v1/me/player — active playback on any device (Web API). */
 
 import { parseRetryAfterSec, SpotifyApiError } from "@/lib/spotify/errors";
+import { recordSpotify429 } from "@/lib/spotify/rateLimiter";
 
 const ME_PLAYER = "https://api.spotify.com/v1/me/player";
 
@@ -254,6 +255,7 @@ export async function fetchCurrentPlayback(
 
   if (!res.ok) {
     const t = await res.text();
+    if (res.status === 429) recordSpotify429();
     throw new SpotifyApiError(
       res.status,
       t,

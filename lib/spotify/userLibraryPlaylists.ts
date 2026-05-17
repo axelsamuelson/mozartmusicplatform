@@ -1,6 +1,7 @@
 /** Spotify Web API: current user’s playlists (owned only) and playlist item stats (user OAuth token). */
 
 import { parseRetryAfterSec } from "@/lib/spotify/errors";
+import { recordSpotify429 } from "@/lib/spotify/rateLimiter";
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
@@ -35,6 +36,7 @@ async function spotifyGetJson<T>(accessToken: string, url: string): Promise<T> {
       throw new Error(`Spotify API ${res.status}: invalid JSON response`);
     }
   }
+  recordSpotify429();
   throw new Error("Spotify API 429: exhausted retries");
 }
 

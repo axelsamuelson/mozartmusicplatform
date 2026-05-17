@@ -1,10 +1,35 @@
 import { NextResponse, type NextRequest } from "next/server";
 
-import { CACHE_PRIVATE_3600 } from "@/lib/spotify/cacheHeaders";
-import { fetchSpotifyItem, SpotifyHttpError, type ItemType } from "@/lib/spotify/api";
+import { CACHE_PRIVATE_86400 } from "@/lib/spotify/cacheHeaders";
+import {
+  cachedSpotifyRequest,
+  getStaleSpotifyCache,
+  SPOTIFY_CACHE_TTL,
+} from "@/lib/spotify/cache";
+import {
+  fetchSpotifyItem,
+  SpotifyHttpError,
+  type CachedItemPayload,
+  type ItemType,
+} from "@/lib/spotify/api";
+import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import { createClient } from "@/lib/supabase/server";
 
 const ALLOWED: ItemType[] = ["track", "album", "artist"];
+
+async function loadCachedItemFromDb(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  spotifyId: string,
+) {
+  const { data } = await supabase
+    .from("cached_items")
+    .select(
+      "spotify_id, type, name, artist_name, image_url, preview_url, genres, primary_artist_id, cached_at",
+    )
+    .eq("spotify_id", spotifyId)
+    .maybeSingle();
+  return data;
+}
 
 export async function GET(
   request: NextRequest,
@@ -30,18 +55,54 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  let payload;
+  const cacheKey = `item:${id}:${type}`;
+
+  let payload: CachedItemPayload;
   try {
-    payload = await fetchSpotifyItem(id, type);
+    payload = await cachedSpotifyRequest(
+      cacheKey,
+      SPOTIFY_CACHE_TTL.item,
+      () => fetchSpotifyItem(id, type),
+    );
   } catch (e) {
-    if (e instanceof SpotifyHttpError) {
-      return NextResponse.json(
-        { error: e.message },
-        { status: e.status === 404 ? 404 : e.status >= 500 ? 502 : e.status },
-      );
+    if (
+      e instanceof Error &&
+      (e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE" || isSpotifyCircuitOpen())
+    ) {
+      const stalePayload = await getStaleSpotifyCache<CachedItemPayload>(
+        cacheKey,
+      ).catch(() => null);
+      if (stalePayload) {
+        payload = stalePayload;
+      } else {
+        const dbItem = await loadCachedItemFromDb(supabase, id);
+        if (dbItem) {
+          return NextResponse.json(
+            { item: dbItem },
+            { headers: { "Cache-Control": CACHE_PRIVATE_86400 } },
+          );
+        }
+        return NextResponse.json(
+          { error: "Spotify temporarily unavailable" },
+          { status: 503 },
+        );
+      }
+    } else if (e instanceof SpotifyHttpError) {
+      const stalePayload = await getStaleSpotifyCache<CachedItemPayload>(
+        cacheKey,
+      ).catch(() => null);
+      if (stalePayload) {
+        payload = stalePayload;
+      } else {
+        return NextResponse.json(
+          { error: e.message },
+          { status: e.status === 404 ? 404 : e.status >= 500 ? 502 : e.status },
+        );
+      }
+    } else {
+      const message = e instanceof Error ? e.message : "Spotify request failed";
+      return NextResponse.json({ error: message }, { status: 502 });
     }
-    const message = e instanceof Error ? e.message : "Spotify request failed";
-    return NextResponse.json({ error: message }, { status: 502 });
   }
 
   const now = new Date().toISOString();
@@ -70,6 +131,6 @@ export async function GET(
 
   return NextResponse.json(
     { item: data },
-    { headers: { "Cache-Control": CACHE_PRIVATE_3600 } },
+    { headers: { "Cache-Control": CACHE_PRIVATE_86400 } },
   );
 }

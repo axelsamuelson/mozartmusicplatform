@@ -1,13 +1,21 @@
 import { NextResponse } from "next/server";
 
-import { CACHE_PRIVATE_60 } from "@/lib/spotify/cacheHeaders";
 import { loadUserRatedTrackSpotifyIds } from "@/lib/ratings/userRatedTrackIds";
+import {
+  cachedSpotifyRequest,
+  getStaleSpotifyCache,
+  SPOTIFY_CACHE_TTL,
+} from "@/lib/spotify/cache";
 import {
   loadUserPlaylistTracksMap,
   statsFromTrackIds,
 } from "@/lib/spotify/playlistTracksDb";
-import { fetchOwnedMyPlaylistSummaries } from "@/lib/spotify/userLibraryPlaylists";
+import {
+  fetchOwnedMyPlaylistSummaries,
+  type SpotifyMyPlaylistSummary,
+} from "@/lib/spotify/userLibraryPlaylists";
 import type { SpotifyPlaylistListItem } from "@/lib/types/spotifyLibrary";
+import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 
@@ -37,9 +45,61 @@ export async function GET() {
     return NextResponse.json({ error: msg || "Auth failed" }, { status: 401 });
   }
 
+  const cacheKey = `playlists:${user.id}`;
+
+  let summaries: SpotifyMyPlaylistSummary[];
   try {
-    const [summaries, tracksMap, ratedTrackIds] = await Promise.all([
-      fetchOwnedMyPlaylistSummaries(accessToken),
+    summaries = await cachedSpotifyRequest(
+      cacheKey,
+      SPOTIFY_CACHE_TTL.userPlaylists,
+      () => fetchOwnedMyPlaylistSummaries(accessToken),
+    );
+  } catch (e) {
+    if (
+      e instanceof Error &&
+      (e.message === "SPOTIFY_CIRCUIT_OPEN_NO_CACHE" || isSpotifyCircuitOpen())
+    ) {
+      const stale = await getStaleSpotifyCache<SpotifyMyPlaylistSummary[]>(
+        cacheKey,
+      ).catch(() => null);
+      if (!stale?.length) {
+        return NextResponse.json(
+          { error: "Spotify temporarily unavailable. Try again shortly." },
+          { status: 503 },
+        );
+      }
+      summaries = stale;
+    } else {
+      const message = e instanceof Error ? e.message : "Failed to load Spotify playlists";
+      const spotifyStatus = /^Spotify API (\d{3}):/.exec(message)?.[1];
+      if (spotifyStatus === "401") {
+        return NextResponse.json({ error: message }, { status: 401 });
+      }
+      if (spotifyStatus === "403") {
+        return NextResponse.json(
+          {
+            error: `${message} — ensure Spotify login includes playlist read access (e.g. playlist-read-private).`,
+          },
+          { status: 403 },
+        );
+      }
+      if (spotifyStatus === "429") {
+        const stale = await getStaleSpotifyCache<SpotifyMyPlaylistSummary[]>(
+          cacheKey,
+        ).catch(() => null);
+        if (stale?.length) {
+          summaries = stale;
+        } else {
+          return NextResponse.json({ error: message }, { status: 429 });
+        }
+      } else {
+        return NextResponse.json({ error: message }, { status: 502 });
+      }
+    }
+  }
+
+  try {
+    const [tracksMap, ratedTrackIds] = await Promise.all([
       loadUserPlaylistTracksMap(supabase, user.id),
       loadUserRatedTrackSpotifyIds(supabase, user.id),
     ]);
@@ -85,27 +145,14 @@ export async function GET() {
 
     return NextResponse.json(
       { playlists },
-      { headers: { "Cache-Control": CACHE_PRIVATE_60 } },
+      {
+        headers: {
+          "Cache-Control": `private, max-age=${SPOTIFY_CACHE_TTL.userPlaylists}`,
+        },
+      },
     );
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Failed to load Spotify playlists";
-
-    const spotifyStatus = /^Spotify API (\d{3}):/.exec(message)?.[1];
-    if (spotifyStatus === "401") {
-      return NextResponse.json({ error: message }, { status: 401 });
-    }
-    if (spotifyStatus === "403") {
-      return NextResponse.json(
-        {
-          error: `${message} — ensure Spotify login includes playlist read access (e.g. playlist-read-private).`,
-        },
-        { status: 403 },
-      );
-    }
-    if (spotifyStatus === "429") {
-      return NextResponse.json({ error: message }, { status: 429 });
-    }
-
-    return NextResponse.json({ error: message }, { status: 502 });
+    const message = e instanceof Error ? e.message : "Failed to load playlists";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }
