@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 
 import { Slider } from "@/components/ui/slider";
+import { LiveSessionButton } from "@/components/LiveSessionButton";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { createClient } from "@/lib/supabase/client";
@@ -231,6 +232,9 @@ export function Player() {
         }
         await refreshAll();
       } catch (e) {
+        if (e instanceof Error && e.message === "Playback disconnected") {
+          return;
+        }
         setPlaybackReady(false);
         setConnectError(
           e instanceof Error ? e.message : "Playback unavailable",
@@ -250,6 +254,7 @@ export function Player() {
     return () => {
       subscription.unsubscribe();
       unregisterPlaybackTokenProvider();
+      disconnectPlayback();
     };
   }, [fetchApiPlayback, refreshAll]);
 
@@ -564,7 +569,9 @@ export function Player() {
     const v = vals[0] ?? 70;
     setVolumePct(v);
     if (volumeFromSdk) {
-      void setVolume(v / 100);
+      void setVolume(v / 100).catch(() => {
+        /* SDK not connected — slider is visual only */
+      });
     }
   };
 
@@ -634,25 +641,28 @@ export function Player() {
               />
             ) : null}
           </div>
-          {canShowRate ? (
-            <button
-              type="button"
-              onClick={() => setRateDialogOpen(true)}
-              aria-label={
-                currentTrackRating
-                  ? `Rated ${currentTrackRating.score}, edit rating`
-                  : "Rate this track"
-              }
-              className={cn(
-                "shrink-0 rounded-full px-3 py-1 text-xs font-semibold tabular-nums transition-colors",
-                currentTrackRating
-                  ? scoreBadgeClass(currentTrackRating.score)
-                  : "border border-white/20 text-white/60 hover:border-wam hover:text-wam",
-              )}
-            >
-              {currentTrackRating ? currentTrackRating.score : "Rate"}
-            </button>
-          ) : null}
+          <div className="flex shrink-0 items-center gap-2">
+            <LiveSessionButton canStart={Boolean(canShowRate)} />
+            {canShowRate ? (
+              <button
+                type="button"
+                onClick={() => setRateDialogOpen(true)}
+                aria-label={
+                  currentTrackRating
+                    ? `Rated ${currentTrackRating.score}, edit rating`
+                    : "Rate this track"
+                }
+                className={cn(
+                  "rounded-full px-3 py-1 text-xs font-semibold tabular-nums transition-colors",
+                  currentTrackRating
+                    ? scoreBadgeClass(currentTrackRating.score)
+                    : "border border-white/20 text-white/60 hover:border-wam hover:text-wam",
+                )}
+              >
+                {currentTrackRating ? currentTrackRating.score : "Rate"}
+              </button>
+            ) : null}
+          </div>
         </div>
         {connectError ? (
           <p className="truncate px-4 pt-1 text-xs text-amber-300/90">{connectError}</p>
@@ -815,6 +825,7 @@ export function Player() {
         </div>
 
         <div className="order-3 hidden min-h-0 flex-1 basis-0 items-center justify-end gap-4 md:order-none md:flex md:pl-3">
+          <LiveSessionButton canStart={Boolean(canShowRate)} />
           {canShowRate ? (
             <button
               type="button"

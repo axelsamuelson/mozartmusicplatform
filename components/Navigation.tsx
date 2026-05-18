@@ -7,6 +7,7 @@ import type { User } from "@supabase/supabase-js";
 import { Menu, X } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { getActiveLiveSession } from "@/lib/live/activeSessionStorage";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -58,6 +59,7 @@ export function Navigation() {
   const [isOpen, setIsOpen] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
   const [hasLoaded, setHasLoaded] = useState(false);
+  const [liveHref, setLiveHref] = useState<string | null>(null);
   const lastScrollY = useRef(0);
 
   const navShown = isVisible || isOpen;
@@ -77,6 +79,28 @@ export function Navigation() {
 
   useEffect(() => {
     queueMicrotask(() => setIsOpen(false));
+  }, [pathname]);
+
+  useEffect(() => {
+    function syncLiveNav() {
+      const ref = getActiveLiveSession();
+      if (!ref) {
+        setLiveHref(null);
+        return;
+      }
+      fetch(`/api/live/${ref.sessionId}`)
+        .then(async (res) => {
+          if (!res.ok) {
+            setLiveHref(null);
+            return;
+          }
+          setLiveHref(`/live/${ref.code}`);
+        })
+        .catch(() => setLiveHref(null));
+    }
+    syncLiveNav();
+    window.addEventListener("wam-live-session-changed", syncLiveNav);
+    return () => window.removeEventListener("wam-live-session-changed", syncLiveNav);
   }, [pathname]);
 
   useEffect(() => {
@@ -176,6 +200,19 @@ export function Navigation() {
                 </Link>
 
                 <div className="flex items-center space-x-8">
+                  {liveHref ? (
+                    <Link
+                      href={liveHref}
+                      className={cn(
+                        "cursor-pointer text-sm font-medium transition-colors duration-200",
+                        pathname.startsWith("/live/")
+                          ? "text-wam"
+                          : "text-wam/80 hover:text-wam",
+                      )}
+                    >
+                      Live
+                    </Link>
+                  ) : null}
                   {NAV.map((item) => {
                     const active = linkActive(item.href, pathname);
                     return (
@@ -253,6 +290,20 @@ export function Navigation() {
             {user ? <div className="mb-3 h-px bg-white/10" /> : null}
 
             <nav className="flex flex-col gap-0.5">
+              {liveHref ? (
+                <Link
+                  href={liveHref}
+                  className={cn(
+                    "rounded-xl px-3 py-3 text-sm font-medium transition-colors",
+                    pathname.startsWith("/live/")
+                      ? "text-wam"
+                      : "text-wam/80 hover:bg-white/10 hover:text-white",
+                  )}
+                  onClick={() => setIsOpen(false)}
+                >
+                  Live session
+                </Link>
+              ) : null}
               {NAV.map((item) => {
                 const active = linkActive(item.href, pathname);
                 return (
