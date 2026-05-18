@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
+import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
 import { loadLiveRatingsForSession } from "@/lib/live/loadLiveRatings";
 import { persistLiveRatingToLibrary } from "@/lib/live/persistLiveRating";
 import { createClient } from "@/lib/supabase/server";
@@ -64,7 +65,8 @@ export async function GET(
   }
 
   try {
-    const ratings = await loadLiveRatingsForSession(supabase, sessionId);
+    const allRatings = await loadLiveRatingsForSession(supabase, sessionId);
+    const ratings = ratingsForCurrentTrack(allRatings, session);
     const { data: moods } = await supabase
       .from("mood_tags")
       .select("id, level, name, description, color")
@@ -74,7 +76,7 @@ export async function GET(
       (moods ?? []) as MoodTagRow[],
     );
 
-    return NextResponse.json({ ratings, aggregate, session });
+    return NextResponse.json({ ratings, aggregate, session, allRatings });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load ratings";
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -142,11 +144,20 @@ export async function POST(
 
   const display_name = displayNameFromUser(user);
 
+  const trackId = session.spotify_track_id;
+  if (!trackId) {
+    return NextResponse.json(
+      { error: "No track is playing in this session yet." },
+      { status: 400 },
+    );
+  }
+
   const { data: prior } = await supabase
     .from("live_ratings")
     .select("score")
     .eq("session_id", sessionId)
     .eq("user_id", user.id)
+    .eq("spotify_track_id", trackId)
     .maybeSingle();
 
   const { data: saved, error: saveErr } = await supabase
@@ -155,6 +166,7 @@ export async function POST(
       {
         session_id: sessionId,
         user_id: user.id,
+        spotify_track_id: trackId,
         display_name,
         score,
         mood_tag_id,
@@ -162,10 +174,10 @@ export async function POST(
         comment: comment === "" ? null : comment,
         submitted_at: new Date().toISOString(),
       },
-      { onConflict: "session_id,user_id" },
+      { onConflict: "session_id,user_id,spotify_track_id" },
     )
     .select(
-      "id, session_id, user_id, display_name, score, mood_tag_id, genre_ids, comment, submitted_at",
+      "id, session_id, user_id, spotify_track_id, display_name, score, mood_tag_id, genre_ids, comment, submitted_at",
     )
     .single();
 
@@ -190,7 +202,8 @@ export async function POST(
     }
   }
 
-  const ratings = await loadLiveRatingsForSession(supabase, sessionId);
+  const allRatings = await loadLiveRatingsForSession(supabase, sessionId);
+  const ratings = ratingsForCurrentTrack(allRatings, session);
   const { data: moods } = await supabase
     .from("mood_tags")
     .select("id, level, name, description, color")
@@ -200,6 +213,8 @@ export async function POST(
   return NextResponse.json({
     rating: saved,
     ratings,
+    allRatings,
     aggregate,
+    session,
   });
 }

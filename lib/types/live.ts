@@ -9,6 +9,11 @@ export type LiveSessionRow = {
   artist_name: string | null;
   image_url: string | null;
   is_active: boolean;
+  is_playing?: boolean;
+  progress_ms?: number;
+  duration_ms?: number;
+  device_name?: string | null;
+  playback_updated_at?: string | null;
   created_at: string;
   expires_at: string;
 };
@@ -18,6 +23,7 @@ export type LiveRatingRow = {
   session_id: string;
   user_id: string;
   display_name: string | null;
+  spotify_track_id?: string | null;
   score: number;
   mood_tag_id: number | null;
   genre_ids: number[];

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { subscribeLiveSessionRealtime } from "@/lib/live/sessionRealtimeHub";
-import type { LivePresenceMember } from "@/lib/types/live";
+import type { LivePresenceMember, LiveSessionRow } from "@/lib/types/live";
 
 export type { LivePresenceMember };
 
@@ -15,6 +15,7 @@ export function useLiveSessionChannel(options: {
   hasRated: boolean;
   enabled?: boolean;
   onRatingsChange?: () => void;
+  onSessionUpdate?: (session: LiveSessionRow) => void;
 }): { participants: LivePresenceMember[]; connected: boolean } {
   const {
     sessionId,
@@ -24,6 +25,7 @@ export function useLiveSessionChannel(options: {
     hasRated,
     enabled = true,
     onRatingsChange,
+    onSessionUpdate,
   } = options;
 
   const [participants, setParticipants] = useState<LivePresenceMember[]>([]);
@@ -32,7 +34,9 @@ export function useLiveSessionChannel(options: {
     null,
   );
   const onRatingsChangeRef = useRef(onRatingsChange);
+  const onSessionUpdateRef = useRef(onSessionUpdate);
   onRatingsChangeRef.current = onRatingsChange;
+  onSessionUpdateRef.current = onSessionUpdate;
 
   useEffect(() => {
     if (!enabled || !sessionId || !userId) {
@@ -50,6 +54,7 @@ export function useLiveSessionChannel(options: {
       onParticipants: setParticipants,
       onConnected: setConnected,
       onRatingsChange: () => onRatingsChangeRef.current?.(),
+      onSessionUpdate: (session) => onSessionUpdateRef.current?.(session),
     });
     subscriptionRef.current = sub;
 

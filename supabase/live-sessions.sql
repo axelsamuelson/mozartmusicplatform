@@ -10,6 +10,11 @@ create table if not exists live_sessions (
   artist_name text,
   image_url text,
   is_active boolean default true,
+  is_playing boolean default false,
+  progress_ms integer default 0,
+  duration_ms integer default 0,
+  device_name text,
+  playback_updated_at timestamptz default now(),
   created_at timestamptz default now(),
   expires_at timestamptz default now() + interval '4 hours'
 );
@@ -23,8 +28,8 @@ create table if not exists live_ratings (
   mood_tag_id integer references mood_tags (id),
   genre_ids integer[] not null default '{}',
   comment text,
-  submitted_at timestamptz default now(),
-  unique (session_id, user_id)
+  spotify_track_id text,
+  submitted_at timestamptz default now()
 );
 
 create index if not exists live_sessions_code_idx on live_sessions (code) where is_active = true;
@@ -74,3 +79,29 @@ begin
 exception
   when duplicate_object then null;
 end $$;
+
+-- Idempotent upgrades when tables already existed (older schema)
+alter table live_sessions
+  add column if not exists is_playing boolean default false,
+  add column if not exists progress_ms integer default 0,
+  add column if not exists duration_ms integer default 0,
+  add column if not exists device_name text,
+  add column if not exists playback_updated_at timestamptz default now();
+
+alter table live_ratings
+  add column if not exists spotify_track_id text;
+
+update live_ratings lr
+set spotify_track_id = ls.spotify_track_id
+from live_sessions ls
+where lr.session_id = ls.id
+  and lr.spotify_track_id is null
+  and ls.spotify_track_id is not null;
+
+alter table live_ratings
+  drop constraint if exists live_ratings_session_id_user_id_key;
+
+drop index if exists live_ratings_session_user_track_uidx;
+
+create unique index if not exists live_ratings_session_user_track_uidx
+  on live_ratings (session_id, user_id, spotify_track_id);

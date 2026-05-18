@@ -15,6 +15,7 @@ import {
 
 import { Slider } from "@/components/ui/slider";
 import { LiveSessionButton } from "@/components/LiveSessionButton";
+import { useLiveSessionHostSync } from "@/lib/live/useLiveSessionHostSync";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { createClient } from "@/lib/supabase/client";
@@ -174,6 +175,8 @@ export function Player() {
   const refreshAll = useCallback(async () => {
     await Promise.all([refreshSdkState(), fetchApiPlayback()]);
   }, [fetchApiPlayback, refreshSdkState]);
+
+  useLiveSessionHostSync(hasUser && hasToken);
 
   useEffect(() => {
     const supabase = createClient();

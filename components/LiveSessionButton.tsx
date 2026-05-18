@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Copy, Radio, X } from "lucide-react";
 import { toast } from "sonner";
 
+import { LiveNowPlaying } from "@/components/LiveNowPlaying";
 import { LiveParticipants } from "@/components/LiveParticipants";
 import { Button } from "@/components/ui/button";
 import {
@@ -93,6 +94,9 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
     avatarUrl,
     hasRated: false,
     enabled: dialogOpen && Boolean(active?.sessionId),
+    onSessionUpdate: (next) => {
+      setSession((prev) => (prev ? { ...prev, ...next } : next));
+    },
   });
 
   async function handleStart() {
@@ -223,11 +227,8 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
                     : `/live/${code}`}
                 </Link>
               </p>
-              {session?.track_name ? (
-                <p className="text-center text-sm text-white/60">
-                  {session.track_name}
-                  {session.artist_name ? ` · ${session.artist_name}` : ""}
-                </p>
+              {session ? (
+                <LiveNowPlaying session={session} className="!p-4" />
               ) : null}
 
               <div className="flex gap-2">

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { playbackToSessionPatch } from "@/lib/live/mapPlaybackToSession";
 import { generateSessionCode, normalizeSessionCode } from "@/lib/utils/sessionCode";
 import { fetchCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
 import { createClient } from "@/lib/supabase/server";
@@ -97,16 +98,15 @@ export async function POST() {
 
   const code = await uniqueCode(supabase);
 
+  const playbackPatch = playbackToSessionPatch(playback);
+
   const { data: inserted, error: insertErr } = await supabase
     .from("live_sessions")
     .insert({
       code,
       host_user_id: user.id,
-      spotify_track_id: playback.trackId,
-      track_name: playback.trackName,
-      artist_name: playback.artistName,
-      image_url: playback.imageUrl || null,
       is_active: true,
+      ...playbackPatch,
     })
     .select("*")
     .single();

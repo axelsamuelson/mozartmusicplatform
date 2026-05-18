@@ -1,7 +1,7 @@
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/client";
-import type { LivePresenceMember } from "@/lib/types/live";
+import type { LivePresenceMember, LiveSessionRow } from "@/lib/types/live";
 
 type PresencePayload = {
   display_name?: string;
@@ -20,6 +20,7 @@ type HubEntry = {
   participants: LivePresenceMember[];
   listeners: Set<(members: LivePresenceMember[]) => void>;
   ratingsListeners: Set<() => void>;
+  sessionListeners: Set<(session: LiveSessionRow) => void>;
   refCount: number;
   presenceMeta: PresenceMeta;
 };
@@ -49,9 +50,15 @@ function parsePresenceState(
   return members.sort((a, b) => a.displayName.localeCompare(b.displayName));
 }
 
-function notify(entry: HubEntry): void {
+function notifyParticipants(entry: HubEntry): void {
   for (const listener of entry.listeners) {
     listener(entry.participants);
+  }
+}
+
+function notifySession(entry: HubEntry, session: LiveSessionRow): void {
+  for (const listener of entry.sessionListeners) {
+    listener(session);
   }
 }
 
@@ -59,7 +66,7 @@ function syncPresence(entry: HubEntry): void {
   entry.participants = parsePresenceState(
     entry.channel.presenceState<PresencePayload>(),
   );
-  notify(entry);
+  notifyParticipants(entry);
 }
 
 async function trackPresence(entry: HubEntry): Promise<void> {
@@ -84,13 +91,21 @@ function attachHub(
   sessionId: string,
   userId: string,
   meta: PresenceMeta,
-  onRatingsChange?: () => void,
+  callbacks?: {
+    onRatingsChange?: () => void;
+    onSessionUpdate?: (session: LiveSessionRow) => void;
+  },
 ): HubEntry {
   const existing = hubs.get(sessionId);
   if (existing) {
     existing.refCount += 1;
     existing.presenceMeta = meta;
-    if (onRatingsChange) existing.ratingsListeners.add(onRatingsChange);
+    if (callbacks?.onRatingsChange) {
+      existing.ratingsListeners.add(callbacks.onRatingsChange);
+    }
+    if (callbacks?.onSessionUpdate) {
+      existing.sessionListeners.add(callbacks.onSessionUpdate);
+    }
     if (existing.channel.state === "joined") {
       void trackPresence(existing);
     }
@@ -106,10 +121,16 @@ function attachHub(
     participants: [],
     listeners: new Set(),
     ratingsListeners: new Set(),
+    sessionListeners: new Set(),
     refCount: 1,
     presenceMeta: meta,
   };
-  if (onRatingsChange) entry.ratingsListeners.add(onRatingsChange);
+  if (callbacks?.onRatingsChange) {
+    entry.ratingsListeners.add(callbacks.onRatingsChange);
+  }
+  if (callbacks?.onSessionUpdate) {
+    entry.sessionListeners.add(callbacks.onSessionUpdate);
+  }
 
   channel
     .on("presence", { event: "sync" }, () => syncPresence(entry))
@@ -125,6 +146,19 @@ function attachHub(
       },
       () => {
         for (const cb of entry.ratingsListeners) cb();
+      },
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "UPDATE",
+        schema: "public",
+        table: "live_sessions",
+        filter: `id=eq.${sessionId}`,
+      },
+      (payload) => {
+        const row = payload.new as LiveSessionRow | undefined;
+        if (row?.id) notifySession(entry, row);
       },
     )
     .subscribe((status) => {
@@ -149,15 +183,13 @@ export function subscribeLiveSessionRealtime(options: {
   onParticipants: (members: LivePresenceMember[]) => void;
   onConnected?: (connected: boolean) => void;
   onRatingsChange?: () => void;
+  onSessionUpdate?: (session: LiveSessionRow) => void;
 }): LiveSessionRealtimeSubscription {
   const supabase = createClient();
-  const entry = attachHub(
-    supabase,
-    options.sessionId,
-    options.userId,
-    options.meta,
-    options.onRatingsChange,
-  );
+  const entry = attachHub(supabase, options.sessionId, options.userId, options.meta, {
+    onRatingsChange: options.onRatingsChange,
+    onSessionUpdate: options.onSessionUpdate,
+  });
 
   entry.listeners.add(options.onParticipants);
   options.onParticipants(entry.participants);
@@ -174,6 +206,9 @@ export function subscribeLiveSessionRealtime(options: {
       entry.listeners.delete(options.onParticipants);
       if (options.onRatingsChange) {
         entry.ratingsListeners.delete(options.onRatingsChange);
+      }
+      if (options.onSessionUpdate) {
+        entry.sessionListeners.delete(options.onSessionUpdate);
       }
       entry.refCount -= 1;
       if (entry.refCount <= 0) {

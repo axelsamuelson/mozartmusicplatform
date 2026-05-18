@@ -10,7 +10,7 @@ export async function loadLiveRatingsForSession(
   const { data, error } = await supabase
     .from("live_ratings")
     .select(
-      "id, session_id, user_id, display_name, score, mood_tag_id, genre_ids, comment, submitted_at",
+      "id, session_id, user_id, spotify_track_id, display_name, score, mood_tag_id, genre_ids, comment, submitted_at",
     )
     .eq("session_id", sessionId)
     .order("submitted_at", { ascending: true });
@@ -42,6 +42,7 @@ export async function loadLiveRatingsForSession(
       id: row.id as string,
       session_id: row.session_id as string,
       user_id: row.user_id as string,
+      spotify_track_id: (row.spotify_track_id as string | null) ?? null,
       display_name: row.display_name as string | null,
       score: row.score as number,
       mood_tag_id: moodId,

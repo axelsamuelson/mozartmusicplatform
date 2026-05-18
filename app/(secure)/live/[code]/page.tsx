@@ -1,14 +1,17 @@
 "use client";
 
-import Image from "next/image";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import { LiveNowPlaying } from "@/components/LiveNowPlaying";
 import { LiveParticipants } from "@/components/LiveParticipants";
 import { LiveRatingForm } from "@/components/LiveRatingForm";
 import { scoreBadgeClass, scoreReadoutClass } from "@/components/ScoreSlider";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
+import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
 import { useLiveSessionChannel } from "@/lib/live/useLiveSessionChannel";
 import { liveAvatarUrl, liveDisplayName, liveInitials } from "@/lib/live/userDisplay";
 import { createClient } from "@/lib/supabase/client";
@@ -17,7 +20,6 @@ import type { GenreTagRow, MoodTagRow } from "@/lib/types/ratings";
 import { normalizeSessionCode } from "@/lib/utils/sessionCode";
 import { glassCard, pageHeading, pageSub } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 
 export default function LiveSessionPage() {
   const params = useParams();
@@ -29,7 +31,7 @@ export default function LiveSessionPage() {
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
 
   const [session, setSession] = useState<LiveSessionRow | null>(null);
-  const [ratings, setRatings] = useState<LiveRatingRow[]>([]);
+  const [allRatings, setAllRatings] = useState<LiveRatingRow[]>([]);
   const [aggregate, setAggregate] = useState<LiveSessionAggregate | null>(null);
   const [genreTags, setGenreTags] = useState<GenreTagRow[]>([]);
   const [moodTags, setMoodTags] = useState<MoodTagRow[]>([]);
@@ -38,11 +40,22 @@ export default function LiveSessionPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const currentRatings = useMemo(
+    () => (session ? ratingsForCurrentTrack(allRatings, session) : []),
+    [allRatings, session],
+  );
+
   const myRating = useMemo(
-    () => ratings.find((r) => r.user_id === userId) ?? null,
-    [ratings, userId],
+    () => currentRatings.find((r) => r.user_id === userId) ?? null,
+    [currentRatings, userId],
   );
   const hasSubmitted = Boolean(myRating);
+
+  const displayAggregate = useMemo(() => {
+    if (aggregate) return aggregate;
+    if (!session || currentRatings.length === 0) return null;
+    return aggregateLiveRatings(currentRatings, moodTags);
+  }, [aggregate, session, currentRatings, moodTags]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -55,17 +68,24 @@ export default function LiveSessionPage() {
     });
   }, []);
 
+  const applySession = useCallback((next: LiveSessionRow) => {
+    setSession((prev) => (prev ? { ...prev, ...next } : next));
+  }, []);
+
   const loadRatings = useCallback(async (sessionId: string) => {
     const res = await fetch(`/api/live/${sessionId}/ratings`);
     const body = (await res.json().catch(() => ({}))) as {
       error?: string;
       ratings?: LiveRatingRow[];
+      allRatings?: LiveRatingRow[];
       aggregate?: LiveSessionAggregate;
+      session?: LiveSessionRow;
     };
     if (!res.ok) throw new Error(body.error || "Could not load ratings");
-    setRatings(body.ratings ?? []);
+    if (body.session) applySession(body.session);
+    setAllRatings(body.allRatings ?? body.ratings ?? []);
     setAggregate(body.aggregate ?? null);
-  }, []);
+  }, [applySession]);
 
   useEffect(() => {
     if (!code) {
@@ -119,10 +139,11 @@ export default function LiveSessionPage() {
     onRatingsChange: () => {
       if (session?.id) void loadRatings(session.id);
     },
+    onSessionUpdate: applySession,
   });
 
   const onlineCount = Math.max(participants.length, 1);
-  const ratedCount = aggregate?.rated_count ?? ratings.length;
+  const ratedCount = displayAggregate?.rated_count ?? currentRatings.length;
 
   async function handleSubmit(payload: {
     score: number;
@@ -141,10 +162,13 @@ export default function LiveSessionPage() {
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
         ratings?: LiveRatingRow[];
+        allRatings?: LiveRatingRow[];
         aggregate?: LiveSessionAggregate;
+        session?: LiveSessionRow;
       };
       if (!res.ok) throw new Error(body.error || "Could not submit rating");
-      setRatings(body.ratings ?? []);
+      if (body.session) applySession(body.session);
+      setAllRatings(body.allRatings ?? body.ratings ?? []);
       setAggregate(body.aggregate ?? null);
       toast.success("Rating submitted");
     } catch (e) {
@@ -178,17 +202,11 @@ export default function LiveSessionPage() {
         <p className="text-xs uppercase tracking-widest text-white/40">Live session</p>
         <p className="mt-1 font-mono text-2xl font-bold tracking-[0.3em] text-wam">{code}</p>
         <p className={cn(pageSub, "mt-2")}>
-          {ratedCount} of {onlineCount} rated
+          {ratedCount} of {onlineCount} rated this track
         </p>
       </header>
 
-      <article className={cn(glassCard, "mb-6 flex flex-col items-center gap-4 text-center")}>
-        <TrackArt url={session.image_url} name={session.track_name ?? "Track"} />
-        <div>
-          <h1 className="text-lg font-semibold text-white">{session.track_name ?? "Unknown track"}</h1>
-          <p className="text-sm text-white/50">{session.artist_name ?? "Unknown artist"}</p>
-        </div>
-      </article>
+      <LiveNowPlaying session={session} className="mb-6" />
 
       <section className={cn(glassCard, "mb-6")}>
         <p className="mb-3 text-center text-xs uppercase tracking-wider text-white/40">
@@ -197,7 +215,7 @@ export default function LiveSessionPage() {
         <LiveParticipants participants={participants} />
       </section>
 
-      {!hasSubmitted ? (
+      {!hasSubmitted && session.spotify_track_id ? (
         <section className={cn(glassCard, "mb-6")}>
           <h2 className="mb-4 text-center text-sm font-medium text-white">Your rating</h2>
           <LiveRatingForm
@@ -210,26 +228,20 @@ export default function LiveSessionPage() {
         </section>
       ) : null}
 
+      {!session.spotify_track_id ? (
+        <section className={cn(glassCard, "mb-6")}>
+          <p className="text-center text-sm text-white/50">
+            Rate when the host starts playing a track.
+          </p>
+        </section>
+      ) : null}
+
       <LiveResults
-        ratings={ratings}
-        aggregate={aggregate}
-        showWaiting={ratedCount === 0}
+        ratings={currentRatings}
+        aggregate={displayAggregate}
+        showWaiting={ratedCount === 0 && Boolean(session.spotify_track_id)}
       />
     </main>
-  );
-}
-
-function TrackArt({ url, name }: { url: string | null; name: string }) {
-  return (
-    <div className="relative size-32 overflow-hidden rounded-xl border border-white/10 bg-white/10 shadow-lg">
-      {url ? (
-        <Image src={url} alt="" fill className="object-cover" sizes="128px" />
-      ) : (
-        <div className="flex size-full items-center justify-center text-white/30" aria-hidden>
-          ♪
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -257,10 +269,7 @@ function LiveResults({
   return (
     <section className={cn(glassCard, "space-y-6")}>
       {avg != null ? (
-        <div className="text-center">
-          <p className="text-xs uppercase tracking-wider text-white/40">Group average</p>
-          <p className={cn("text-5xl font-bold tabular-nums", scoreReadoutClass(avg))}>{avg}</p>
-        </div>
+        <GroupAverage score={avg} />
       ) : null}
 
       {aggregate && aggregate.mood_counts.length > 0 ? (
@@ -284,7 +293,7 @@ function LiveResults({
         {ratings.map((r) => (
           <li
             key={r.id}
-            className="animate-in fade-in duration-300 flex items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3"
+            className="flex animate-in fade-in items-start gap-3 rounded-xl border border-white/10 bg-white/5 p-3 duration-300"
           >
             <Avatar className="size-9 border border-white/15">
               <AvatarFallback className="bg-white/10 text-xs text-white">
@@ -301,6 +310,15 @@ function LiveResults({
         ))}
       </ul>
     </section>
+  );
+}
+
+function GroupAverage({ score }: { score: number }) {
+  return (
+    <div className="text-center">
+      <p className="text-xs uppercase tracking-wider text-white/40">Group average</p>
+      <p className={cn("text-5xl font-bold tabular-nums", scoreReadoutClass(score))}>{score}</p>
+    </div>
   );
 }
 
