@@ -1,6 +1,9 @@
+import { after } from "next/server";
 import { type NextRequest, NextResponse } from "next/server";
 
+import { syncWamPlaylistsForRating } from "@/lib/playlist/syncWamPlaylist";
 import { createClient } from "@/lib/supabase/server";
+import { fetchRatingById } from "@/lib/ratings/normalize";
 
 type PatchBody = {
   score?: number;
@@ -66,6 +69,9 @@ export async function PATCH(
     );
   }
 
+  const priorFull =
+    body.score !== undefined ? await fetchRatingById(supabase, id) : null;
+
   const { data, error } = await supabase
     .from("ratings")
     .update(patch)
@@ -79,6 +85,17 @@ export async function PATCH(
   }
   if (!data) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  if (body.score !== undefined) {
+    const full = await fetchRatingById(supabase, id);
+    if (full) {
+      after(async () => {
+        await syncWamPlaylistsForRating(supabase, user.id, full, {
+          previousScore: priorFull?.score,
+        });
+      });
+    }
   }
 
   return NextResponse.json({ rating: data });

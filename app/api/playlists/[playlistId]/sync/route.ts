@@ -1,10 +1,8 @@
 import { NextResponse } from "next/server";
 
-import { ratingMatchesPlaylistFilters, trackUrisFromRatings } from "@/lib/playlist/matchRating";
-import { loadAllUserRatings } from "@/lib/ratings/normalize";
+import { syncWamPlaylistToSpotify } from "@/lib/playlist/syncWamPlaylist";
 import { assertWamOwned } from "@/lib/spotify/playlistGuard";
 import { SPOTIFY_CIRCUIT_UNAVAILABLE_MSG } from "@/lib/spotify/rateLimiter";
-import { replacePlaylistTracks } from "@/lib/spotify/userPlaylistSpotify";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
@@ -74,48 +72,46 @@ export async function POST(
     return NextResponse.json({ error: m }, { status: 500 });
   }
 
-  const filters = {
-    filter_genres: pl.filter_genres,
-    filter_mood_levels: pl.filter_mood_levels,
-    filter_moments: pl.filter_moments,
-    filter_min_score: pl.filter_min_score,
-  };
-
-  let uris: string[];
   try {
-    const ratings = await loadAllUserRatings(supabase, user.id);
-    const matched = ratings.filter((r) => ratingMatchesPlaylistFilters(r, filters));
-    uris = trackUrisFromRatings(matched);
-    await replacePlaylistTracks(accessToken, pl.spotify_playlist_id, uris);
+    const { track_count } = await syncWamPlaylistToSpotify(
+      supabase,
+      user.id,
+      pl,
+      accessToken,
+    );
+
+    const { data: updated, error: upErr } = await supabase
+      .from("wam_playlists")
+      .select("*")
+      .eq("id", playlistId)
+      .eq("user_id", user.id)
+      .single();
+
+    if (upErr || !updated) {
+      return NextResponse.json(
+        { error: upErr?.message ?? "Failed to load playlist row" },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      playlist: updated as WamPlaylistRow,
+      track_count,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Sync failed";
     if (msg === SPOTIFY_CIRCUIT_UNAVAILABLE_MSG) {
       return NextResponse.json({ error: msg }, { status: 503 });
     }
+    if (msg.includes("403")) {
+      return NextResponse.json(
+        {
+          error:
+            "Spotify refused updating the playlist (403). Sign out and sign in again so playlist-modify scopes apply, or check Spotify Developer app settings.",
+        },
+        { status: 403 },
+      );
+    }
     return NextResponse.json({ error: msg }, { status: 502 });
   }
-
-  const now = new Date().toISOString();
-  const { data: updated, error: upErr } = await supabase
-    .from("wam_playlists")
-    .update({
-      track_count: uris.length,
-      last_synced_at: now,
-    })
-    .eq("id", playlistId)
-    .eq("user_id", user.id)
-    .select("*")
-    .single();
-
-  if (upErr || !updated) {
-    return NextResponse.json(
-      { error: upErr?.message ?? "Failed to update playlist row" },
-      { status: 500 },
-    );
-  }
-
-  return NextResponse.json({
-    playlist: updated as WamPlaylistRow,
-    track_count: uris.length,
-  });
 }

@@ -31,6 +31,17 @@ export function ratingMatchesPlaylistFilters(
   return true;
 }
 
+/** Re-sync when the rating newly matches, or used to match (e.g. score lowered). */
+export function playlistNeedsResyncForRating(
+  rating: RatingDetail,
+  filters: WamPlaylistFilters,
+  previousScore?: number,
+): boolean {
+  if (ratingMatchesPlaylistFilters(rating, filters)) return true;
+  if (previousScore === undefined) return false;
+  return ratingMatchesPlaylistFilters({ ...rating, score: previousScore }, filters);
+}
+
 export function trackUrisFromRatings(ratings: RatingDetail[]): string[] {
   return ratings
     .filter((r) => r.item?.type === "track")

@@ -49,6 +49,20 @@ export async function resolvePlaybackPlaylistContext(
     .maybeSingle();
 
   if (cacheError) {
+    const msg = cacheError.message ?? "";
+    if (
+      msg.includes("playlist_id") ||
+      msg.includes("does not exist") ||
+      msg.includes("PGRST204")
+    ) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn(
+          "[playback] playlist_tracks cache skipped (schema):",
+          msg,
+        );
+      }
+      return empty;
+    }
     throw new Error(cacheError.message);
   }
 

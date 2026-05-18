@@ -196,7 +196,8 @@ export async function replacePlaylistTracks(
   uris: string[],
 ): Promise<void> {
   assertSpotifyCircuitAvailable();
-  const base = `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/tracks`;
+  /** Use `/items` — `/tracks` is deprecated and often returns 403 in dev mode. */
+  const base = `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items`;
 
   if (uris.length === 0) {
     const res = await fetch(base, {

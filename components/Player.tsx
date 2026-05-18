@@ -105,6 +105,12 @@ function isApiPlaybackWithTrack(
 const PLAYBACK_POLLING_DISABLED =
   process.env.NEXT_PUBLIC_DISABLE_PLAYBACK_POLLING === "true";
 
+const PLAYER_DEBUG = process.env.NODE_ENV === "development";
+
+function playerLog(...args: unknown[]): void {
+  if (PLAYER_DEBUG) console.log("[Player]", ...args);
+}
+
 function apiPlaybackPollMs(playback: SpotifyPlaybackApiResponse): number {
   if (!isApiPlaybackWithTrack(playback)) return 60_000;
   if (playback.isPlaying) return 15_000;
@@ -143,13 +149,24 @@ export function Player() {
   const fetchApiPlayback = useCallback(async () => {
     try {
       const res = await fetch("/api/spotify/playback", { cache: "no-store" });
+      const circuitHeader = res.headers.get("X-WAM-Circuit");
       const json = (await res.json()) as SpotifyPlaybackApiResponse & {
         error?: string;
       };
-      if (!res.ok || typeof json.error === "string") return;
+      playerLog("API response:", {
+        ok: res.ok,
+        status: res.status,
+        error: json.error,
+        circuit: circuitHeader,
+        body: json,
+      });
+      if (!res.ok || typeof json.error === "string") {
+        playerLog("API poll skipped state update:", res.status, json.error);
+        return;
+      }
       setApiPlayback(json as SpotifyPlaybackApiResponse);
-    } catch {
-      /* ignore */
+    } catch (e) {
+      playerLog("API poll failed:", e);
     }
   }, []);
 
@@ -167,6 +184,16 @@ export function Player() {
       return typeof body.access_token === "string" ? body.access_token : null;
     });
 
+    async function checkSpotifyToken(): Promise<boolean> {
+      const res = await fetch("/api/spotify/token", { cache: "no-store" });
+      if (res.ok) return true;
+      if (res.status !== 401) return false;
+      const { error } = await supabase.auth.refreshSession();
+      if (error) return false;
+      const retry = await fetch("/api/spotify/token", { cache: "no-store" });
+      return retry.ok;
+    }
+
     async function syncSession() {
       const {
         data: { user },
@@ -174,8 +201,7 @@ export function Player() {
       let tokenOk = false;
       if (user) {
         try {
-          const res = await fetch("/api/spotify/token", { cache: "no-store" });
-          tokenOk = res.ok;
+          tokenOk = await checkSpotifyToken();
         } catch {
           tokenOk = false;
         }
@@ -234,8 +260,17 @@ export function Player() {
       !sdkState.paused,
   );
 
+  const pollIntervalRef = useRef(0);
+
   useEffect(() => {
-    if (!hasToken || PLAYBACK_POLLING_DISABLED || sdkPlaying) return;
+    if (!hasToken || PLAYBACK_POLLING_DISABLED || sdkPlaying) {
+      playerLog("Polling inactive:", {
+        hasToken,
+        pollingDisabled: PLAYBACK_POLLING_DISABLED,
+        sdkPlaying,
+      });
+      return;
+    }
 
     let cancelled = false;
     let timeoutId = 0;
@@ -243,6 +278,8 @@ export function Player() {
     const scheduleNext = () => {
       if (cancelled) return;
       const ms = apiPlaybackPollMs(apiPlaybackRef.current);
+      pollIntervalRef.current = ms;
+      playerLog("Starting poll timer, interval ms:", ms);
       timeoutId = window.setTimeout(() => {
         void fetchApiPlayback().finally(() => {
           if (!cancelled) scheduleNext();
@@ -250,6 +287,7 @@ export function Player() {
       }, ms);
     };
 
+    playerLog("Starting playback polling");
     void fetchApiPlayback().finally(() => {
       if (!cancelled) scheduleNext();
     });
@@ -372,8 +410,13 @@ export function Player() {
     setRateDialogOpen(false);
   }, [nowTrackId]);
 
-  const showFromSdk = useSdk || Boolean(playbackReady && sdkTrack && !displayApi);
+  /** Only show SDK metadata when this browser is actively playing via Web Playback SDK. */
+  const showFromSdk = sdkPlaying;
   const volumeFromSdk = playbackReady && Boolean(sdkTrack);
+
+  const hasAnyTrack = sdkPlaying
+    ? Boolean(sdkTrack)
+    : isApiPlaybackWithTrack(apiPlayback);
 
   useEffect(() => {
     if (useSdk || !displayApi) return;
@@ -425,6 +468,43 @@ export function Player() {
     };
   }, [hasUser, hasToken, connectError]);
 
+  const playbackSource = sdkPlaying
+    ? "sdk"
+    : isApiPlaybackWithTrack(apiPlayback)
+      ? "api"
+      : "none";
+
+  useEffect(() => {
+    playerLog("State update:", {
+      hasUser,
+      hasToken,
+      playbackReady,
+      connectError,
+      pollingDisabled: PLAYBACK_POLLING_DISABLED,
+      sdkPlaying,
+      sdkTrackName: sdkTrack?.name ?? null,
+      sdkPaused: sdkState?.paused ?? null,
+      apiPlayback: JSON.stringify(apiPlayback),
+      displayApi: displayApi ? displayApi.trackName : null,
+      showFromSdk,
+      hasAnyTrack,
+      source: playbackSource,
+    });
+  }, [
+    hasUser,
+    hasToken,
+    playbackReady,
+    connectError,
+    sdkPlaying,
+    sdkTrack?.name,
+    sdkState?.paused,
+    apiPlayback,
+    displayApi,
+    showFromSdk,
+    hasAnyTrack,
+    playbackSource,
+  ]);
+
   if (!hasUser) return null;
 
   const artUrl = showFromSdk
@@ -467,8 +547,6 @@ export function Player() {
       ? !displayApi.isPlaying
       : Boolean(sdkState?.paused ?? true);
 
-  const hasAnyTrack = Boolean(showFromSdk ? sdkTrack : displayApi);
-
   const canShowRate = Boolean(
     nowTrackId && hasAnyTrack && nowPlayingIsRateableTrack,
   );
@@ -489,6 +567,17 @@ export function Player() {
       void setVolume(v / 100);
     }
   };
+
+  playerLog("Rendering:", {
+    showPlayer: hasToken,
+    trackName: hasAnyTrack ? trackTitle : "Nothing playing",
+    isPlaying: sdkPlaying
+      ? !sdkState?.paused
+      : isApiPlaybackWithTrack(apiPlayback)
+        ? apiPlayback.isPlaying
+        : false,
+    source: playbackSource,
+  });
 
   if (!hasToken) {
     return (

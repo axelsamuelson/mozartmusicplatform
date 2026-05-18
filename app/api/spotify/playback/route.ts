@@ -17,6 +17,7 @@ import {
 import { resolvePlaybackPlaylistContext } from "@/lib/spotify/playbackPlaylistContext";
 import { SpotifyApiError } from "@/lib/spotify/errors";
 import {
+  getSpotifyCircuitState,
   isSpotify429Error,
   isSpotifyCircuitOpen,
   recordSpotify429,
@@ -27,14 +28,20 @@ import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 
 export const dynamic = "force-dynamic";
 
+const IS_DEV = process.env.NODE_ENV === "development";
+
 function playbackJson(
   body: SpotifyPlaybackApiResponse,
   userId: string,
 ): NextResponse {
   setDedupedPlayback(userId, body);
   setLastKnownPlayback(userId, body);
+  const circuit = getSpotifyCircuitState();
   return NextResponse.json(body, {
-    headers: { "Cache-Control": CACHE_NO_STORE },
+    headers: {
+      "Cache-Control": CACHE_NO_STORE,
+      "X-WAM-Circuit": circuit,
+    },
   });
 }
 
@@ -42,8 +49,12 @@ function fallbackPlayback(userId: string): NextResponse {
   const last =
     getDedupedPlayback(userId) ??
     getLastKnownPlayback(userId) ?? { isPlaying: false };
+  const circuit = getSpotifyCircuitState();
   return NextResponse.json(last, {
-    headers: { "Cache-Control": CACHE_NO_STORE },
+    headers: {
+      "Cache-Control": CACHE_NO_STORE,
+      "X-WAM-Circuit": circuit,
+    },
   });
 }
 
@@ -96,14 +107,49 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const hasProviderToken = Boolean(session?.provider_token);
+  const hasProviderRefresh = Boolean(session?.provider_refresh_token);
+  const circuit = getSpotifyCircuitState();
+
+  if (IS_DEV) {
+    console.log("[playback] request", {
+      userId: user.id,
+      hasProviderToken,
+      hasProviderRefresh,
+      circuit,
+    });
+  }
+
+  if (!hasProviderToken && !hasProviderRefresh) {
+    return NextResponse.json(
+      { error: "no_token" },
+      { status: 401, headers: { "Cache-Control": CACHE_NO_STORE } },
+    );
+  }
+
   const deduped = getDedupedPlayback(user.id);
   if (deduped) {
+    if (IS_DEV) {
+      console.log("[playback] dedup hit", {
+        isPlaying: deduped.isPlaying,
+        trackId: "trackId" in deduped ? deduped.trackId : null,
+      });
+    }
     return NextResponse.json(deduped, {
-      headers: { "Cache-Control": CACHE_NO_STORE },
+      headers: {
+        "Cache-Control": CACHE_NO_STORE,
+        "X-WAM-Circuit": circuit,
+      },
     });
   }
 
   if (isSpotifyCircuitOpen()) {
+    if (IS_DEV) {
+      console.warn("[playback] circuit OPEN — returning fallback");
+    }
     return fallbackPlayback(user.id);
   }
 
@@ -112,26 +158,77 @@ export async function GET() {
     accessToken = await requireProviderAccessToken(supabase);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "";
-    if (msg === "MISSING_SPOTIFY_TOKEN") {
+    if (IS_DEV) {
+      console.warn("[playback] token error", msg);
+    }
+    if (msg === "MISSING_SPOTIFY_TOKEN" || msg === "MISSING_SPOTIFY_REFRESH") {
       return NextResponse.json(
-        { error: "Missing Spotify token. Sign out and sign in with Spotify again." },
-        { status: 401 },
+        { error: "no_token" },
+        { status: 401, headers: { "Cache-Control": CACHE_NO_STORE } },
       );
     }
     return NextResponse.json({ error: msg || "Auth failed" }, { status: 401 });
+  }
+
+  if (IS_DEV) {
+    const testRes = await fetch("https://api.spotify.com/v1/me", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const testUser = (await testRes.json()) as { id?: string; email?: string };
+    console.log(
+      "[playback] token belongs to spotify user:",
+      testUser.id,
+      testUser.email,
+    );
+
+    const playbackRes = await fetch("https://api.spotify.com/v1/me/player", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    console.log("[playback] /me/player status:", playbackRes.status);
+    if (playbackRes.status === 200) {
+      const raw = await playbackRes.json();
+      console.log(
+        "[playback] raw response:",
+        JSON.stringify(raw).slice(0, 500),
+      );
+    }
   }
 
   try {
     const playback = await fetchCurrentPlayback(accessToken);
     recordSpotifySuccess();
 
+    if (IS_DEV) {
+      console.log("[playback] spotify /me/player", {
+        hasPlayback: Boolean(playback),
+        isPlaying: playback?.isPlaying ?? null,
+        trackId: playback?.trackId ?? null,
+        trackName: playback?.trackName ?? null,
+        deviceName: playback?.deviceName ?? null,
+      });
+    }
+
     if (!playback) {
       const empty: SpotifyPlaybackApiResponse = { isPlaying: false };
       return playbackJson(empty, user.id);
     }
 
-    const body = await enrichPlayback(supabase, user.id, accessToken, playback);
-    return playbackJson(body, user.id);
+    try {
+      const body = await enrichPlayback(
+        supabase,
+        user.id,
+        accessToken,
+        playback,
+      );
+      return playbackJson(body, user.id);
+    } catch (enrichErr) {
+      const enrichMsg =
+        enrichErr instanceof Error ? enrichErr.message : String(enrichErr);
+      if (IS_DEV) {
+        console.warn("[playback] enrich failed, returning raw playback:", enrichMsg);
+      }
+      return playbackJson(playback, user.id);
+    }
   } catch (e) {
     if (isSpotify429Error(e)) {
       recordSpotify429();

@@ -1,5 +1,11 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+import {
+  persistSpotifyTokenMetadata,
+  sessionProviderTokenIsFresh,
+  spotifyRefreshFromUser,
+} from "@/lib/spotify/spotifyTokenMetadata";
+
 type SpotifyRefreshResponse = {
   access_token: string;
   expires_in: number;
@@ -42,30 +48,38 @@ async function refreshSpotifyUserToken(
 }
 
 /**
- * Returns Spotify user access token from session without preemptive GET /me
- * (avoids one Spotify API call per server request; routes handle 401).
+ * Spotify user access token: session provider_token when fresh, otherwise refresh
+ * via provider_refresh_token (session or user_metadata from first login).
  */
 export async function getValidProviderAccessToken(
   supabase: SupabaseClient,
 ): Promise<string> {
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  const [{ data: { session } }, { data: { user } }] = await Promise.all([
+    supabase.auth.getSession(),
+    supabase.auth.getUser(),
+  ]);
 
   if (!session) {
     throw new Error("MISSING_SPOTIFY_TOKEN");
   }
 
-  const access = session.provider_token;
-  if (access) {
-    return access;
+  if (sessionProviderTokenIsFresh(session.provider_token, user)) {
+    return session.provider_token;
   }
 
-  const refresh = session.provider_refresh_token;
+  const refresh =
+    session.provider_refresh_token ?? spotifyRefreshFromUser(user);
+
   if (!refresh) {
     throw new Error("MISSING_SPOTIFY_REFRESH");
   }
 
   const data = await refreshSpotifyUserToken(refresh);
+
+  await persistSpotifyTokenMetadata(supabase, {
+    provider_refresh_token: data.refresh_token ?? refresh,
+    expiresIn: data.expires_in,
+  });
+
   return data.access_token;
 }

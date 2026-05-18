@@ -1,5 +1,7 @@
+import { after } from "next/server";
 import { type NextRequest, NextResponse } from "next/server";
 
+import { syncWamPlaylistsForRating } from "@/lib/playlist/syncWamPlaylist";
 import { createClient } from "@/lib/supabase/server";
 import {
   fetchRatingById,
@@ -216,9 +218,12 @@ export async function POST(request: NextRequest) {
   }
 
   let ratingId: string;
+  let previousScore: number | undefined;
 
   if (existing) {
     ratingId = existing.id;
+    const prior = await fetchRatingById(supabase, ratingId);
+    previousScore = prior?.score;
     const { error: upErr } = await supabase
       .from("ratings")
       .update({
@@ -308,6 +313,12 @@ export async function POST(request: NextRequest) {
   if (!full) {
     return NextResponse.json({ error: "Failed to load saved rating" }, { status: 500 });
   }
+
+  after(async () => {
+    await syncWamPlaylistsForRating(supabase, user.id, full, {
+      previousScore,
+    });
+  });
 
   return NextResponse.json({ rating: full });
 }
