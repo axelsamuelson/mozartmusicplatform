@@ -1,7 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { enrichTracksFromCacheAndSpotify } from "@/lib/live/enrichTrackMetadata";
+import { getHostToken } from "@/lib/live/getHostToken";
 import type { SpotifyQueuedTrack } from "@/lib/spotify/playerQueue";
+import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import type { LiveSessionRow } from "@/lib/types/live";
 
 function toQueuedTrack(
@@ -11,10 +13,13 @@ function toQueuedTrack(
     artist_name: string | null;
     image_url: string | null;
   },
-): SpotifyQueuedTrack {
+): SpotifyQueuedTrack | null {
+  const trackName = meta.track_name?.trim();
+  if (!trackName) return null;
+
   return {
     spotify_track_id: id,
-    track_name: meta.track_name ?? "Unknown track",
+    track_name: trackName,
     artist_name: meta.artist_name,
     image_url: meta.image_url,
   };
@@ -38,9 +43,7 @@ function nextTrackIdsFromList(
   return nextIds;
 }
 
-/**
- * Upcoming tracks from synced playlist_tracks only — zero Spotify Web API calls.
- */
+/** Upcoming tracks from synced playlist_tracks (no /me/player calls). */
 async function upcomingFromCachedPlaylists(
   admin: SupabaseClient,
   hostUserId: string,
@@ -82,16 +85,35 @@ function logQueuePreview(message: string, detail?: unknown): void {
   }
 }
 
+async function resolveMetadataToken(
+  admin: SupabaseClient,
+  session: LiveSessionRow,
+  options?: FetchHostPlaybackUpcomingOptions,
+): Promise<string | null> {
+  if (isSpotifyCircuitOpen()) return null;
+
+  if (options?.hostAccessToken?.trim()) {
+    return options.hostAccessToken.trim();
+  }
+
+  try {
+    return await getHostToken(admin, session, options?.callerUserId);
+  } catch (e) {
+    logQueuePreview("no token for track metadata", e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 /**
- * Next tracks for empty guest queue — DB/cache only (playlist_tracks + cached_items).
- * Intentionally avoids Spotify /me/player and /me/player/queue to protect rate limits.
+ * Next tracks for empty guest queue.
+ * Uses playlist_tracks + cached_items; one batched GET /tracks when metadata is missing.
  */
 export async function fetchHostPlaybackUpcoming(
   admin: SupabaseClient,
   session: LiveSessionRow,
   limit: number,
   excludeTrackIds: Set<string> = new Set(),
-  _options?: FetchHostPlaybackUpcomingOptions,
+  options?: FetchHostPlaybackUpcomingOptions,
 ): Promise<SpotifyQueuedTrack[]> {
   if (limit <= 0) return [];
 
@@ -118,24 +140,28 @@ export async function fetchHostPlaybackUpcoming(
     return [];
   }
 
-  const meta = await enrichTracksFromCacheAndSpotify(admin, playlistTrackIds, null);
-  const results: SpotifyQueuedTrack[] = [];
+  const metaToken = await resolveMetadataToken(admin, session, options);
+  const meta = await enrichTracksFromCacheAndSpotify(
+    admin,
+    playlistTrackIds,
+    metaToken,
+  );
 
+  const results: SpotifyQueuedTrack[] = [];
   for (const id of playlistTrackIds) {
     const m = meta.get(id);
     if (!m) continue;
-    results.push(
-      toQueuedTrack(id, {
-        track_name:
-          m.track_name ??
-          (id === currentTrackId ? session.track_name : null),
-        artist_name:
-          m.artist_name ??
-          (id === currentTrackId ? session.artist_name : null),
-        image_url:
-          m.image_url ?? (id === currentTrackId ? session.image_url : null),
-      }),
-    );
+    const track = toQueuedTrack(id, {
+      track_name:
+        m.track_name ??
+        (id === currentTrackId ? session.track_name : null),
+      artist_name:
+        m.artist_name ??
+        (id === currentTrackId ? session.artist_name : null),
+      image_url:
+        m.image_url ?? (id === currentTrackId ? session.image_url : null),
+    });
+    if (track) results.push(track);
   }
 
   return results.slice(0, limit);

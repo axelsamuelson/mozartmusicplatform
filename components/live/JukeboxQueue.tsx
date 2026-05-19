@@ -12,6 +12,10 @@ export type JukeboxQueueProps = {
   items: LiveQueueDisplayItem[];
   session: LiveSessionRow;
   userId: string | null;
+  /** Section heading (default: Queue). */
+  title?: string;
+  /** Shown when items is empty. */
+  emptyMessage?: string;
   /** Hide avatar + name beside each queued track (session setting). */
   hideQueueNames?: boolean;
   /** Fills with host Spotify up next when the room queue is short. */
@@ -27,6 +31,8 @@ export function JukeboxQueue({
   items,
   session,
   userId,
+  title = "Queue",
+  emptyMessage,
   hideQueueNames = false,
   usesPlaybackPreview = false,
   onRemove,
@@ -35,19 +41,20 @@ export function JukeboxQueue({
   className,
 }: JukeboxQueueProps) {
   const visible = items;
+  const emptyText =
+    emptyMessage ??
+    (usesPlaybackPreview
+      ? "Nothing up next — play music on the host's Spotify."
+      : "Queue is empty — add a song!");
 
   return (
     <section className={cn(glassCard, className)}>
       <h2 className="mb-3 text-center text-xs uppercase tracking-wider text-white/40">
-        Queue
+        {title}
       </h2>
 
       {items.length === 0 ? (
-        <p className="py-6 text-center text-sm text-white/50">
-          {usesPlaybackPreview
-            ? "Nothing up next — play music on the host's Spotify."
-            : "Queue is empty — add a song!"}
-        </p>
+        <p className="py-6 text-center text-sm text-white/50">{emptyText}</p>
       ) : (
         <ul className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
           {visible.map((item) => (

@@ -44,20 +44,58 @@ export function playbackToSessionPatch(
   };
 }
 
+const PROGRESS_SYNC_THRESHOLD_MS = 8_000;
+
+/** Patch for host sync — never wipe an active track on empty Spotify responses. */
+export function buildSyncPlaybackPatch(
+  session: Pick<
+    LiveSessionRow,
+    | "spotify_track_id"
+    | "track_name"
+    | "artist_name"
+    | "image_url"
+    | "progress_ms"
+    | "duration_ms"
+    | "device_name"
+  >,
+  playback: SpotifyCurrentPlayback | null,
+  now = new Date(),
+): LiveSessionPlaybackPatch {
+  if (playback && playback.itemKind === "track") {
+    return playbackToSessionPatch(playback, now);
+  }
+
+  if (session.spotify_track_id) {
+    return {
+      spotify_track_id: session.spotify_track_id,
+      track_name: session.track_name,
+      artist_name: session.artist_name,
+      image_url: session.image_url,
+      is_playing: false,
+      progress_ms: session.progress_ms ?? 0,
+      duration_ms: session.duration_ms ?? 0,
+      device_name: session.device_name ?? null,
+      playback_updated_at: now.toISOString(),
+    };
+  }
+
+  return playbackToSessionPatch(null, now);
+}
+
 export function sessionPlaybackChanged(
   prev: LiveSessionRow,
   patch: LiveSessionPlaybackPatch,
 ): boolean {
-  return (
-    prev.spotify_track_id !== patch.spotify_track_id ||
-    prev.track_name !== patch.track_name ||
-    prev.artist_name !== patch.artist_name ||
-    prev.image_url !== patch.image_url ||
-    Boolean(prev.is_playing) !== patch.is_playing ||
-    (prev.progress_ms ?? 0) !== patch.progress_ms ||
-    (prev.duration_ms ?? 0) !== patch.duration_ms ||
-    (prev.device_name ?? null) !== patch.device_name
-  );
+  if (prev.spotify_track_id !== patch.spotify_track_id) return true;
+  if (prev.track_name !== patch.track_name) return true;
+  if (prev.artist_name !== patch.artist_name) return true;
+  if (prev.image_url !== patch.image_url) return true;
+  if (Boolean(prev.is_playing) !== patch.is_playing) return true;
+  if ((prev.device_name ?? null) !== patch.device_name) return true;
+  if ((prev.duration_ms ?? 0) !== patch.duration_ms) return true;
+
+  const progressDelta = Math.abs((prev.progress_ms ?? 0) - (patch.progress_ms ?? 0));
+  return progressDelta >= PROGRESS_SYNC_THRESHOLD_MS;
 }
 
 /** Interpolate progress between host sync ticks. */

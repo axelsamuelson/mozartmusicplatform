@@ -23,7 +23,6 @@ import {
 import { activeLiveSessionRefFromRow } from "@/lib/live/activeSessionMeta";
 import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
 import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
-import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
 import {
   type LiveQueueDisplayItem,
   sessionUsesHostPlaybackQueuePreview,
@@ -95,6 +94,26 @@ export default function LiveSessionPage() {
     [allRatings, session],
   );
 
+  const myQueueItems = useMemo((): LiveQueueDisplayItem[] => {
+    if (!userId) return [];
+    return queue
+      .filter((row) => row.user_id === userId)
+      .sort(
+        (a, b) => new Date(a.queued_at).getTime() - new Date(b.queued_at).getTime(),
+      )
+      .map((row, index) => ({
+        kind: "queued" as const,
+        id: row.id,
+        spotify_track_id: row.spotify_track_id,
+        track_name: row.track_name,
+        artist_name: row.artist_name,
+        image_url: row.image_url,
+        position: index + 1,
+        user_id: row.user_id,
+        display_name: row.display_name,
+      }));
+  }, [queue, userId]);
+
   const myRating = useMemo(
     () => currentRatings.find((r) => r.user_id === userId) ?? null,
     [currentRatings, userId],
@@ -124,7 +143,25 @@ export default function LiveSessionPage() {
   }, [router]);
 
   const applySession = useCallback((next: LiveSessionRow) => {
-    setSession((prev) => (prev ? { ...prev, ...next } : next));
+    setSession((prev) => {
+      if (!prev) return next;
+      const staleClear =
+        Boolean(prev.spotify_track_id && prev.track_name) &&
+        !next.spotify_track_id &&
+        !next.track_name;
+      if (staleClear) {
+        return {
+          ...prev,
+          ...next,
+          spotify_track_id: prev.spotify_track_id,
+          track_name: prev.track_name,
+          artist_name: next.artist_name ?? prev.artist_name,
+          image_url: next.image_url ?? prev.image_url,
+          duration_ms: next.duration_ms || prev.duration_ms,
+        };
+      }
+      return { ...prev, ...next };
+    });
     const active = getActiveLiveSession();
     if (active?.sessionId === next.id) {
       setActiveLiveSession(activeLiveSessionRefFromRow(next));
@@ -478,6 +515,7 @@ export default function LiveSessionPage() {
           {showSongQueue ? (
             <>
               <JukeboxQueue
+                title="Room queue"
                 items={displayQueue}
                 session={session}
                 userId={userId}
@@ -487,10 +525,19 @@ export default function LiveSessionPage() {
                 onRemove={(id) => void handleRemoveFromQueue(id)}
                 removingId={removingId}
               />
+              <JukeboxQueue
+                title="Your queue"
+                items={myQueueItems}
+                session={session}
+                userId={userId}
+                hideQueueNames
+                emptyMessage="You have no songs queued — add one below."
+                onRemove={(id) => void handleRemoveFromQueue(id)}
+                removingId={removingId}
+              />
               <JukeboxAddSong
                 sessionId={session.id}
                 myQueueCount={myQueueCount}
-                maxPerUser={MAX_QUEUE_TRACKS_PER_USER}
                 onAdded={() => void loadQueue(session.id)}
               />
             </>

@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 
-import { HostTokenExpiredError } from "@/lib/live/getHostToken";
+import { getHostToken, HostTokenExpiredError } from "@/lib/live/getHostToken";
 import {
   loadPendingQueue,
   loadPlayedQueue,
@@ -10,7 +10,6 @@ import {
 } from "@/lib/live/jukeboxQueue";
 import { buildLiveQueueDisplay } from "@/lib/live/liveQueueDisplay";
 import { invalidatePlaybackQueueDisplayCache } from "@/lib/live/queueDisplayCache";
-import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { playQueueTrackOnHost } from "@/lib/live/songQueuePlayback";
 import {
@@ -51,6 +50,7 @@ export async function GET(
     const queue = await loadPendingQueue(supabase, sessionId);
     const myCount = queue.filter((q) => q.user_id === user.id).length;
 
+    const admin = createAdminClient();
     let hostAccessToken: string | undefined;
     if (user.id === session.host_user_id) {
       try {
@@ -59,9 +59,16 @@ export async function GET(
         hostAccessToken = undefined;
       }
     }
+    if (!hostAccessToken) {
+      try {
+        hostAccessToken = await getHostToken(admin, session, user.id);
+      } catch {
+        hostAccessToken = undefined;
+      }
+    }
 
     const displayQueue = sessionHasQueue(session)
-      ? await buildLiveQueueDisplay(createAdminClient(), session, queue, {
+      ? await buildLiveQueueDisplay(admin, session, queue, {
           callerUserId: user.id,
           hostAccessToken,
         })
@@ -72,7 +79,6 @@ export async function GET(
       displayQueue,
       session,
       myQueueCount: myCount,
-      maxPerUser: MAX_QUEUE_TRACKS_PER_USER,
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load queue";
@@ -156,11 +162,6 @@ export async function POST(
         { status: 400 },
       );
     }
-  } else if (myPending.length >= MAX_QUEUE_TRACKS_PER_USER) {
-    return NextResponse.json(
-      { error: `You can only have ${MAX_QUEUE_TRACKS_PER_USER} tracks in the queue` },
-      { status: 400 },
-    );
   }
 
   const duplicate = pending.some(
@@ -252,6 +253,13 @@ export async function POST(
         hostAccessToken = undefined;
       }
     }
+    if (!hostAccessToken) {
+      try {
+        hostAccessToken = await getHostToken(admin, sessionOut, user.id);
+      } catch {
+        hostAccessToken = undefined;
+      }
+    }
 
     const displayQueue = sessionHasQueue(sessionOut)
       ? await buildLiveQueueDisplay(admin, sessionOut, queue, {
@@ -266,7 +274,6 @@ export async function POST(
       displayQueue,
       session: sessionOut,
       myQueueCount: myCount,
-      maxPerUser: MAX_QUEUE_TRACKS_PER_USER,
     });
   } catch (e) {
     if (e instanceof HostTokenExpiredError) {

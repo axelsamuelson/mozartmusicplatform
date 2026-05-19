@@ -14,7 +14,8 @@ import { cn } from "@/lib/utils";
 export type JukeboxAddSongProps = {
   sessionId: string;
   myQueueCount: number;
-  maxPerUser: number;
+  /** When set (e.g. Jams manual jump), blocks adds at this count. Song queue has no cap. */
+  maxPerUser?: number;
   disabled?: boolean;
   /** Jams: jump-queue manual track */
   isManual?: boolean;
@@ -38,7 +39,8 @@ export function JukeboxAddSong({
   const [addingId, setAddingId] = useState<string | null>(null);
   const [pasting, setPasting] = useState(false);
 
-  const atLimit = myQueueCount >= maxPerUser;
+  const atLimit =
+    maxPerUser != null && Number.isFinite(maxPerUser) && myQueueCount >= maxPerUser;
 
   useEffect(() => {
     const id = window.setTimeout(() => setDebounced(query.trim()), 300);
@@ -148,9 +150,13 @@ export function JukeboxAddSong({
     <section className={cn(glassCard, className)}>
       <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-xs uppercase tracking-wider text-white/40">Add a song</h2>
-        <span className="text-xs text-white/50">
-          {myQueueCount}/{maxPerUser} in queue
-        </span>
+        {maxPerUser != null ? (
+          <span className="text-xs text-white/50">
+            {myQueueCount}/{maxPerUser} in queue
+          </span>
+        ) : myQueueCount > 0 ? (
+          <span className="text-xs text-white/50">{myQueueCount} in queue</span>
+        ) : null}
       </div>
 
       <Input

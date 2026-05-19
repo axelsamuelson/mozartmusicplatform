@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
-  playbackToSessionPatch,
+  buildSyncPlaybackPatch,
   sessionPlaybackChanged,
 } from "@/lib/live/mapPlaybackToSession";
 import { loadPendingQueue } from "@/lib/live/jukeboxQueue";
@@ -109,7 +109,8 @@ export async function PATCH(
     /* non-fatal */
   }
 
-  const patch = playbackToSessionPatch(
+  const patch = buildSyncPlaybackPatch(
+    session,
     playback && "trackId" in playback && playback.itemKind === "track"
       ? playback
       : null,

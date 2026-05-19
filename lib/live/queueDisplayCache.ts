@@ -14,15 +14,28 @@ function cacheKey(sessionId: string, trackId: string | null, pendingCount: numbe
   return `${sessionId}:${trackId ?? "none"}:${pendingCount}`;
 }
 
+function hasUsableTrackNames(items: LiveQueueDisplayItem[]): boolean {
+  return items.some(
+    (row) =>
+      row.track_name.trim().length > 0 &&
+      row.track_name !== "Unknown track",
+  );
+}
+
 export function getCachedPlaybackQueueDisplay(
   sessionId: string,
   trackId: string | null,
   pendingCount: number,
 ): LiveQueueDisplayItem[] | null {
-  const hit = bySession.get(cacheKey(sessionId, trackId, pendingCount));
+  const key = cacheKey(sessionId, trackId, pendingCount);
+  const hit = bySession.get(key);
   if (!hit) return null;
   if (Date.now() - hit.at > TTL_MS) {
-    bySession.delete(cacheKey(sessionId, trackId, pendingCount));
+    bySession.delete(key);
+    return null;
+  }
+  if (!hasUsableTrackNames(hit.items)) {
+    bySession.delete(key);
     return null;
   }
   return hit.items;

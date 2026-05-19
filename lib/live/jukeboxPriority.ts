@@ -1,8 +1,6 @@
 import { normalizeJukeboxRankingMode } from "@/lib/live/jukeboxRanking";
 import type { JukeboxRankingMode, LiveQueueRow, LiveScoreRow } from "@/lib/types/live";
 
-export const MAX_QUEUE_TRACKS_PER_USER = 3;
-
 export function pointsForTrackAverage(avg: number): number {
   if (avg >= 80) return 30;
   if (avg >= 60) return 20;

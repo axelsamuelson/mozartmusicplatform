@@ -111,12 +111,15 @@ export async function buildLiveQueueDisplay(
     });
   }
 
-  if (playbackRows.length > 0) {
+  const cacheable = playbackRows.filter(
+    (row) => row.track_name.trim().length > 0 && row.track_name !== "Unknown track",
+  );
+  if (cacheable.length > 0) {
     setCachedPlaybackQueueDisplay(
       session.id,
       session.spotify_track_id,
       pending.length,
-      playbackRows,
+      cacheable,
     );
   }
 

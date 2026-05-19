@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 
 import { interpolatedProgressMs } from "@/lib/live/mapPlaybackToSession";
@@ -23,26 +23,35 @@ export type LiveNowPlayingProps = {
 };
 
 export function LiveNowPlaying({ session, className }: LiveNowPlayingProps) {
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
   const [smoothProgress, setSmoothProgress] = useState(() =>
     interpolatedProgressMs(session),
   );
 
   useEffect(() => {
-    const tick = () => setSmoothProgress(interpolatedProgressMs(session));
-    tick();
-    if (!session.is_playing) return;
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
+    setSmoothProgress(interpolatedProgressMs(session));
   }, [
-    session,
+    session.spotify_track_id,
     session.is_playing,
+    session.playback_updated_at,
     session.progress_ms,
     session.duration_ms,
-    session.playback_updated_at,
+  ]);
+
+  useEffect(() => {
+    if (!session.is_playing || !session.spotify_track_id) return;
+    const id = window.setInterval(() => {
+      setSmoothProgress(interpolatedProgressMs(sessionRef.current));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [
     session.spotify_track_id,
-    session.track_name,
-    session.artist_name,
-    session.image_url,
+    session.is_playing,
+    session.playback_updated_at,
+    session.progress_ms,
+    session.duration_ms,
   ]);
 
   const duration = session.duration_ms ?? 0;
