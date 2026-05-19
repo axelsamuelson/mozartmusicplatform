@@ -12,7 +12,8 @@ export function useLiveSessionChannel(options: {
   userId: string | null;
   displayName: string;
   avatarUrl: string | null;
-  hasRated: boolean;
+  /** Omit to leave has_rated unchanged on the presence channel (e.g. host dialog). */
+  hasRated?: boolean;
   enabled?: boolean;
   onRatingsChange?: () => void;
   onQueueChange?: () => void;
@@ -66,7 +67,11 @@ export function useLiveSessionChannel(options: {
     const sub = subscribeLiveSessionRealtime({
       sessionId,
       userId,
-      meta: { displayName, avatarUrl, hasRated },
+      meta: {
+        displayName,
+        avatarUrl,
+        ...(hasRated !== undefined ? { hasRated } : {}),
+      },
       onParticipants: setParticipants,
       onConnected: setConnected,
       onRatingsChange: () => onRatingsChangeRef.current?.(),
@@ -88,7 +93,7 @@ export function useLiveSessionChannel(options: {
     subscriptionRef.current?.updatePresence({
       displayName,
       avatarUrl,
-      hasRated,
+      ...(hasRated !== undefined ? { hasRated } : {}),
     });
   }, [displayName, avatarUrl, hasRated]);
 

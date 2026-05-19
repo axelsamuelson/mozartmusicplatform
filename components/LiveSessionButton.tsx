@@ -151,7 +151,6 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
     userId,
     displayName,
     avatarUrl: isAnonymous ? null : avatarUrl,
-    hasRated: false,
     enabled: dialogOpen && Boolean(active?.sessionId) && !displayNameLoading,
     onSessionUpdate: (next) => {
       setSession((prev) => (prev ? { ...prev, ...next } : next));

@@ -15,6 +15,35 @@ export type PresenceMeta = {
   hasRated: boolean;
 };
 
+/** Partial presence update — omit hasRated to avoid resetting rating status (e.g. host dialog). */
+export type PresenceMetaUpdate = {
+  displayName?: string;
+  avatarUrl?: string | null;
+  hasRated?: boolean;
+};
+
+function mergePresenceMeta(
+  existing: PresenceMeta | undefined,
+  incoming: PresenceMetaUpdate,
+  fallbackDisplayName: string,
+): PresenceMeta {
+  const base =
+    existing ??
+    ({
+      displayName: incoming.displayName ?? fallbackDisplayName,
+      avatarUrl: incoming.avatarUrl ?? null,
+      hasRated: incoming.hasRated ?? false,
+    } satisfies PresenceMeta);
+
+  return {
+    displayName: incoming.displayName ?? base.displayName,
+    avatarUrl:
+      incoming.avatarUrl !== undefined ? incoming.avatarUrl : base.avatarUrl,
+    hasRated:
+      incoming.hasRated !== undefined ? incoming.hasRated : base.hasRated,
+  };
+}
+
 type HubEntry = {
   channel: RealtimeChannel;
   participants: LivePresenceMember[];
@@ -100,7 +129,7 @@ function attachHub(
   supabase: SupabaseClient,
   sessionId: string,
   userId: string,
-  meta: PresenceMeta,
+  meta: PresenceMetaUpdate,
   callbacks?: {
     onRatingsChange?: () => void;
     onQueueChange?: () => void;
@@ -113,7 +142,11 @@ function attachHub(
   const existing = hubs.get(sessionId);
   if (existing) {
     existing.refCount += 1;
-    existing.presenceMeta = meta;
+    existing.presenceMeta = mergePresenceMeta(
+      existing.presenceMeta,
+      meta,
+      meta.displayName ?? existing.presenceMeta.displayName,
+    );
     if (callbacks?.onRatingsChange) {
       existing.ratingsListeners.add(callbacks.onRatingsChange);
     }
@@ -153,7 +186,11 @@ function attachHub(
     sessionListeners: new Set(),
     sessionEndedListeners: new Set(),
     refCount: 1,
-    presenceMeta: meta,
+    presenceMeta: mergePresenceMeta(
+      undefined,
+      meta,
+      meta.displayName ?? "User",
+    ),
   };
   if (callbacks?.onRatingsChange) {
     entry.ratingsListeners.add(callbacks.onRatingsChange);
@@ -258,13 +295,13 @@ function attachHub(
 
 export type LiveSessionRealtimeSubscription = {
   release: () => void;
-  updatePresence: (meta: PresenceMeta) => void;
+  updatePresence: (meta: PresenceMetaUpdate) => void;
 };
 
 export function subscribeLiveSessionRealtime(options: {
   sessionId: string;
   userId: string;
-  meta: PresenceMeta;
+  meta: PresenceMetaUpdate;
   onParticipants: (members: LivePresenceMember[]) => void;
   onConnected?: (connected: boolean) => void;
   onRatingsChange?: () => void;
@@ -290,7 +327,11 @@ export function subscribeLiveSessionRealtime(options: {
 
   return {
     updatePresence: (meta) => {
-      entry.presenceMeta = meta;
+      entry.presenceMeta = mergePresenceMeta(
+        entry.presenceMeta,
+        meta,
+        entry.presenceMeta.displayName,
+      );
       if (entry.channel.state === "joined") {
         void trackPresence(entry);
       }
