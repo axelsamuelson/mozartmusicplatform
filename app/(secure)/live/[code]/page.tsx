@@ -110,21 +110,19 @@ export default function LiveSessionPage() {
     });
   }, []);
 
-  const applySession = useCallback(
-    (next: LiveSessionRow) => {
-      setSession((prev) => (prev ? { ...prev, ...next } : next));
-      const active = getActiveLiveSession();
-      if (active?.sessionId === next.id) {
-        setActiveLiveSession(activeLiveSessionRefFromRow(next));
-      }
-      if (next.ended_at || !next.is_active) {
-        clearActiveLiveSession();
-        toast.info("Session ended");
-        router.push("/dashboard");
-      }
-    },
-    [router],
-  );
+  const handleSessionEnded = useCallback(() => {
+    clearActiveLiveSession();
+    toast.success("Session ended");
+    router.push("/dashboard");
+  }, [router]);
+
+  const applySession = useCallback((next: LiveSessionRow) => {
+    setSession((prev) => (prev ? { ...prev, ...next } : next));
+    const active = getActiveLiveSession();
+    if (active?.sessionId === next.id) {
+      setActiveLiveSession(activeLiveSessionRefFromRow(next));
+    }
+  }, []);
 
   const loadQueue = useCallback(async (sessionId: string) => {
     const res = await fetch(`/api/live/${sessionId}/queue`);
@@ -250,6 +248,7 @@ export default function LiveSessionPage() {
       if (session?.id && sessionHasScores(session)) void loadScores(session.id);
     },
     onSessionUpdate: applySession,
+    onSessionEnded: handleSessionEnded,
     onBufferChange: () => setBufferRefreshKey((k) => k + 1),
   });
 

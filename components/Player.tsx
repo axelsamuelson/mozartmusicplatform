@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
+import type { Session } from "@supabase/supabase-js";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ListMusic,
@@ -19,16 +20,19 @@ import {
   clearActiveLiveSession,
   getActiveLiveSession,
 } from "@/lib/live/activeSessionStorage";
-import { shouldHostSkipPlaybackApiPoll } from "@/lib/live/activeSessionMeta";
+import {
+  ensureActiveLiveSessionMetadata,
+  shouldHostSkipPlaybackApiPoll,
+} from "@/lib/live/activeSessionMeta";
 import { useLiveSessionHostSync } from "@/lib/live/useLiveSessionHostSync";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { createClient } from "@/lib/supabase/client";
-import {
-  playlistIdFromContextUri,
-  type SpotifyCurrentPlayback,
-  type SpotifyPlaybackApiResponse,
-} from "@/lib/spotify/currentlyPlaying";
+import { emptyPlayback, sdkStateToPlayback } from "@/lib/playback/mappers";
+import { playlistIdFromContextUri } from "@/lib/spotify/currentlyPlaying";
+import { useUnifiedPlayback } from "@/lib/playback/useUnifiedPlayback";
+import type { PlaybackState } from "@/lib/playback/types";
+import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import {
   connectPlayback,
   disconnectPlayback,
@@ -43,7 +47,6 @@ import {
   setVolume,
   unregisterPlaybackTokenProvider,
 } from "@/lib/spotify/player";
-import type { SpotifyWebPlaybackState } from "@/lib/spotify/player";
 import { cn } from "@/lib/utils";
 import type { RatingDetail } from "@/lib/types/ratings";
 
@@ -99,29 +102,25 @@ function PlaylistContextLine({
   );
 }
 
-function isApiPlaybackWithTrack(
-  r: SpotifyPlaybackApiResponse,
-): r is SpotifyCurrentPlayback {
-  return (
-    "trackId" in r &&
-    typeof r.trackId === "string" &&
-    r.trackId.length > 0
-  );
-}
-
-const PLAYBACK_POLLING_DISABLED =
-  process.env.NEXT_PUBLIC_DISABLE_PLAYBACK_POLLING === "true";
-
 const PLAYER_DEBUG = process.env.NODE_ENV === "development";
 
 function playerLog(...args: unknown[]): void {
   if (PLAYER_DEBUG) console.log("[Player]", ...args);
 }
 
-function apiPlaybackPollMs(playback: SpotifyPlaybackApiResponse): number {
-  if (!isApiPlaybackWithTrack(playback)) return 90_000;
-  if (playback.isPlaying) return 20_000;
-  return 45_000;
+function playlistContextFromPlayback(playback: PlaybackState | null) {
+  if (!playback || playback.contextType !== "playlist" || !playback.contextUri) {
+    return null;
+  }
+  const spotifyId = playlistIdFromContextUri(playback.contextUri);
+  const name = playback.contextName?.trim();
+  if (!name || !spotifyId) return null;
+  const isWam = Boolean(playback.isWamPlaylist);
+  const href =
+    isWam && playback.wamPlaylistId
+      ? `/playlists/${playback.wamPlaylistId}`
+      : `https://open.spotify.com/playlist/${spotifyId}`;
+  return { name, href, isWam };
 }
 
 export function Player() {
@@ -131,57 +130,26 @@ export function Player() {
   const [hasToken, setHasToken] = useState(false);
   const [playbackReady, setPlaybackReady] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [sdkState, setSdkState] = useState<SpotifyWebPlaybackState | null>(null);
-  const [apiPlayback, setApiPlayback] = useState<SpotifyPlaybackApiResponse>({
-    isPlaying: false,
-  });
   const [volumePct, setVolumePct] = useState(70);
-  const progressAnchorRef = useRef({ base: 0, at: Date.now() });
-  const [smoothApiProgressMs, setSmoothApiProgressMs] = useState(0);
   const [rateDialogOpen, setRateDialogOpen] = useState(false);
   const [currentTrackRating, setCurrentTrackRating] = useState<RatingDetail | null>(null);
   const playlistContextCacheRef = useRef<{ uri: string | null; name: string | null }>({
     uri: null,
     name: null,
   });
-  const apiPlaybackRef = useRef(apiPlayback);
-  apiPlaybackRef.current = apiPlayback;
-  const refreshSdkState = useCallback(async () => {
-    try {
-      const s = await getCurrentState();
-      setSdkState(s);
-    } catch {
-      setSdkState(null);
-    }
-  }, []);
 
-  const fetchApiPlayback = useCallback(async () => {
-    try {
-      const res = await fetch("/api/spotify/playback", { cache: "no-store" });
-      const circuitHeader = res.headers.get("X-WAM-Circuit");
-      const json = (await res.json()) as SpotifyPlaybackApiResponse & {
-        error?: string;
-      };
-      playerLog("API response:", {
-        ok: res.ok,
-        status: res.status,
-        error: json.error,
-        circuit: circuitHeader,
-        body: json,
-      });
-      if (!res.ok || typeof json.error === "string") {
-        playerLog("API poll skipped state update:", res.status, json.error);
-        return;
-      }
-      setApiPlayback(json as SpotifyPlaybackApiResponse);
-    } catch (e) {
-      playerLog("API poll failed:", e);
-    }
-  }, []);
-
-  const refreshAll = useCallback(async () => {
-    await Promise.all([refreshSdkState(), fetchApiPlayback()]);
-  }, [fetchApiPlayback, refreshSdkState]);
+  const {
+    playback,
+    displayProgressMs,
+    applyPlayback,
+    fetchApiPlayback,
+    refreshAfterTransport,
+  } = useUnifiedPlayback({
+    hasToken,
+    playbackReady,
+    skipApiPoll,
+    enabled: hasUser && hasToken,
+  });
 
   const refreshSkipApiPoll = useCallback(() => {
     const active = getActiveLiveSession();
@@ -194,13 +162,29 @@ export function Player() {
   }, [currentUserId]);
 
   useEffect(() => {
-    refreshSkipApiPoll();
-    const onSessionChange = () => refreshSkipApiPoll();
+    void ensureActiveLiveSessionMetadata().then(() => refreshSkipApiPoll());
+    const onSessionChange = () => {
+      void ensureActiveLiveSessionMetadata().then(() => {
+        refreshSkipApiPoll();
+        const active = getActiveLiveSession();
+        if (active && shouldHostSkipPlaybackApiPoll(active, currentUserId)) {
+          void refreshAfterTransport();
+          void fetchApiPlayback(true);
+        }
+      });
+    };
     window.addEventListener("wam-live-session-changed", onSessionChange);
     return () => window.removeEventListener("wam-live-session-changed", onSessionChange);
-  }, [refreshSkipApiPoll]);
+  }, [currentUserId, fetchApiPlayback, refreshAfterTransport, refreshSkipApiPoll]);
 
-  useLiveSessionHostSync(hasUser && hasToken && !skipApiPoll);
+  useLiveSessionHostSync({
+    enabled: hasUser && hasToken && !skipApiPoll,
+    onTrackChanged: () => {
+      void refreshAfterTransport();
+    },
+  });
+
+  const lastSyncedUserIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     const supabase = createClient();
@@ -211,9 +195,7 @@ export function Player() {
         const body = (await res.json()) as { access_token?: string };
         return typeof body.access_token === "string" ? body.access_token : null;
       }
-      if (res.status === 429 || res.status === 503) {
-        return null;
-      }
+      if (res.status === 429 || res.status === 503) return null;
       if (res.status === 401) {
         const { error } = await supabase.auth.refreshSession();
         if (!error) {
@@ -239,10 +221,8 @@ export function Player() {
       return retry.ok;
     }
 
-    async function syncSession() {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
+    async function syncSession(authSession: Session | null) {
+      const user = authSession?.user ?? null;
       let tokenOk = false;
       if (user) {
         try {
@@ -261,8 +241,7 @@ export function Player() {
         disconnectPlayback();
         setPlaybackReady(false);
         setConnectError(null);
-        setSdkState(null);
-        setApiPlayback({ isPlaying: false });
+        applyPlayback(emptyPlayback(), { broadcast: false });
         return;
       }
 
@@ -276,25 +255,36 @@ export function Player() {
         } catch {
           /* keep default */
         }
-        await refreshAll();
-      } catch (e) {
-        if (e instanceof Error && e.message === "Playback disconnected") {
-          return;
+        const s = await getCurrentState();
+        if (s) {
+          const mapped = sdkStateToPlayback(s);
+          if (mapped) {
+            applyPlayback(mapped);
+          } else if (!shouldHostSkipPlaybackApiPoll(getActiveLiveSession(), user.id)) {
+            await fetchApiPlayback();
+          }
+        } else if (!shouldHostSkipPlaybackApiPoll(getActiveLiveSession(), user.id)) {
+          await fetchApiPlayback();
         }
+      } catch (e) {
+        if (e instanceof Error && e.message === "Playback disconnected") return;
         setPlaybackReady(false);
         setConnectError(
           e instanceof Error ? e.message : "Playback unavailable",
         );
-        void fetchApiPlayback();
+        if (!isSpotifyCircuitOpen()) {
+          void fetchApiPlayback();
+        }
       }
     }
 
-    void syncSession();
-
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange(() => {
-      void syncSession();
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      const userId = session?.user?.id ?? null;
+      if (userId === lastSyncedUserIdRef.current) return;
+      lastSyncedUserIdRef.current = userId;
+      void syncSession(session);
     });
 
     return () => {
@@ -302,135 +292,31 @@ export function Player() {
       unregisterPlaybackTokenProvider();
       disconnectPlayback();
     };
-  }, [fetchApiPlayback, refreshAll, refreshSkipApiPoll]);
+  }, [applyPlayback, fetchApiPlayback, refreshSkipApiPoll]);
 
-  const sdkPlaying = Boolean(
-    playbackReady &&
-      sdkState &&
-      sdkState.track_window?.current_track &&
-      !sdkState.paused,
-  );
+  const fromSdk = playback?.source === "sdk";
+  const hasAnyTrack = Boolean(playback?.trackId);
+  const nowTrackId = playback?.trackId ?? null;
+  const nowPlayingIsRateableTrack = playback?.itemKind !== "episode";
 
-  const pollIntervalRef = useRef(0);
-
-  useEffect(() => {
-    if (!hasToken || PLAYBACK_POLLING_DISABLED || sdkPlaying || skipApiPoll) {
-      playerLog("Polling inactive:", {
-        hasToken,
-        pollingDisabled: PLAYBACK_POLLING_DISABLED,
-        sdkPlaying,
-        skipApiPoll,
-        wamControlsPlayback: getActiveLiveSession()?.wamControlsPlayback,
-      });
-      return;
-    }
-
-    let cancelled = false;
-    let timeoutId = 0;
-
-    const scheduleNext = () => {
-      if (cancelled) return;
-      const ms = apiPlaybackPollMs(apiPlaybackRef.current);
-      pollIntervalRef.current = ms;
-      playerLog("Starting poll timer, interval ms:", ms);
-      timeoutId = window.setTimeout(() => {
-        void fetchApiPlayback().finally(() => {
-          if (!cancelled) scheduleNext();
-        });
-      }, ms);
-    };
-
-    playerLog("Starting playback polling");
-    void fetchApiPlayback().finally(() => {
-      if (!cancelled) scheduleNext();
-    });
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeoutId);
-    };
-  }, [hasToken, fetchApiPlayback, sdkPlaying, skipApiPoll]);
-
-  useEffect(() => {
-    if (!playbackReady) return;
-    const id = window.setInterval(() => {
-      void refreshSdkState();
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [playbackReady, refreshSdkState]);
-
-  const useSdk = sdkPlaying;
-
-  const displayApi = useMemo(
-    () => (!useSdk && isApiPlaybackWithTrack(apiPlayback) ? apiPlayback : null),
-    [apiPlayback, useSdk],
+  const playlistContext = useMemo(
+    () => playlistContextFromPlayback(playback),
+    [playback],
   );
 
   useEffect(() => {
-    if (!displayApi) {
+    if (!playback || playback.contextType !== "playlist" || !playback.contextUri) {
       playlistContextCacheRef.current = { uri: null, name: null };
       return;
     }
-    if (displayApi.contextType !== "playlist" || !displayApi.contextUri) {
-      playlistContextCacheRef.current = { uri: null, name: null };
-      return;
-    }
-    const name = displayApi.contextName;
+    const name = playback.contextName;
     if (typeof name === "string" && name.trim().length > 0) {
       playlistContextCacheRef.current = {
-        uri: displayApi.contextUri,
+        uri: playback.contextUri,
         name: name.trim(),
       };
     }
-  }, [displayApi]);
-
-  const displayPlaylistContextName = useMemo(() => {
-    if (!displayApi || displayApi.contextType !== "playlist") return null;
-    const uri = displayApi.contextUri;
-    const fromApi = displayApi.contextName;
-    if (typeof fromApi === "string" && fromApi.trim().length > 0) return fromApi.trim();
-    if (
-      uri &&
-      playlistContextCacheRef.current.uri === uri &&
-      playlistContextCacheRef.current.name
-    ) {
-      return playlistContextCacheRef.current.name;
-    }
-    return null;
-  }, [displayApi]);
-
-  const playlistContext = useMemo(() => {
-    if (!displayApi || displayApi.contextType !== "playlist") return null;
-    const spotifyId = playlistIdFromContextUri(displayApi.contextUri);
-    const name =
-      (typeof displayApi.contextName === "string" &&
-        displayApi.contextName.trim()) ||
-      displayPlaylistContextName;
-    if (!name || !spotifyId) return null;
-
-    const isWam = Boolean(displayApi.isWamPlaylist);
-    const href =
-      isWam && displayApi.wamPlaylistId
-        ? `/playlists/${displayApi.wamPlaylistId}`
-        : `https://open.spotify.com/playlist/${spotifyId}`;
-
-    return { name, href, isWam };
-  }, [displayApi, displayPlaylistContextName]);
-
-  const sdkTrack = sdkState?.track_window?.current_track ?? null;
-
-  const nowTrackId = useMemo(() => {
-    if (useSdk && sdkTrack?.id) return sdkTrack.id;
-    if (displayApi?.trackId) return displayApi.trackId;
-    if (sdkTrack?.id) return sdkTrack.id;
-    return null;
-  }, [useSdk, sdkTrack?.id, displayApi?.trackId]);
-
-  const nowPlayingIsRateableTrack = useMemo(() => {
-    if (displayApi?.itemKind === "episode") return false;
-    if (sdkTrack?.type === "episode") return false;
-    return true;
-  }, [displayApi?.itemKind, sdkTrack?.type]);
+  }, [playback]);
 
   useEffect(() => {
     if (!hasUser || !nowTrackId) {
@@ -463,31 +349,7 @@ export function Player() {
     setRateDialogOpen(false);
   }, [nowTrackId]);
 
-  /** Only show SDK metadata when this browser is actively playing via Web Playback SDK. */
-  const showFromSdk = sdkPlaying;
-  const volumeFromSdk = playbackReady && Boolean(sdkTrack);
-
-  const hasAnyTrack = sdkPlaying
-    ? Boolean(sdkTrack)
-    : isApiPlaybackWithTrack(apiPlayback);
-
-  useEffect(() => {
-    if (useSdk || !displayApi) return;
-    progressAnchorRef.current = {
-      base: displayApi.progressMs,
-      at: Date.now(),
-    };
-    setSmoothApiProgressMs(displayApi.progressMs);
-  }, [displayApi, useSdk, displayApi?.progressMs, displayApi?.trackId]);
-
-  useEffect(() => {
-    if (useSdk || !displayApi?.isPlaying) return;
-    const id = window.setInterval(() => {
-      const { base, at } = progressAnchorRef.current;
-      setSmoothApiProgressMs(base + (Date.now() - at));
-    }, 1000);
-    return () => window.clearInterval(id);
-  }, [displayApi?.isPlaying, displayApi?.trackId, useSdk]);
+  const volumeFromSdk = playbackReady && fromSdk;
 
   useEffect(() => {
     if (!hasUser) {
@@ -521,84 +383,29 @@ export function Player() {
     };
   }, [hasUser, hasToken, connectError]);
 
-  const playbackSource = sdkPlaying
-    ? "sdk"
-    : isApiPlaybackWithTrack(apiPlayback)
-      ? "api"
-      : "none";
-
   useEffect(() => {
-    playerLog("State update:", {
-      hasUser,
-      hasToken,
-      playbackReady,
-      connectError,
-      pollingDisabled: PLAYBACK_POLLING_DISABLED,
-      sdkPlaying,
-      sdkTrackName: sdkTrack?.name ?? null,
-      sdkPaused: sdkState?.paused ?? null,
-      apiPlayback: JSON.stringify(apiPlayback),
-      displayApi: displayApi ? displayApi.trackName : null,
-      showFromSdk,
-      hasAnyTrack,
-      source: playbackSource,
-    });
-  }, [
-    hasUser,
-    hasToken,
-    playbackReady,
-    connectError,
-    sdkPlaying,
-    sdkTrack?.name,
-    sdkState?.paused,
-    apiPlayback,
-    displayApi,
-    showFromSdk,
-    hasAnyTrack,
-    playbackSource,
-  ]);
+    playerLog("playback:", playback);
+  }, [playback]);
 
   if (!hasUser) return null;
 
-  const artUrl = showFromSdk
-    ? sdkTrack?.album?.images?.[0]?.url ?? null
-    : displayApi?.imageUrl || null;
-
-  const trackTitle = showFromSdk
-    ? sdkTrack?.name ?? "Nothing playing"
-    : displayApi?.trackName ?? "Nothing playing";
-
-  const artistLine = showFromSdk
-    ? sdkTrack?.artists?.map((a) => a.name).join(", ") ?? "—"
-    : displayApi?.artistName ?? "—";
-
-  const deviceLine = useSdk
+  const artUrl = playback?.imageUrl ?? null;
+  const trackTitle = playback?.trackName ?? "Nothing playing";
+  const artistLine = playback?.artistName ?? "—";
+  const deviceLine = fromSdk
     ? "Playing in this browser"
-    : displayApi
-      ? displayApi.isPlaying
-        ? `Playing on ${displayApi.deviceName}`
-        : `Paused · ${displayApi.deviceName}`
-      : showFromSdk && playbackReady
+    : playback?.deviceName
+      ? playback.isPlaying
+        ? `Playing on ${playback.deviceName}`
+        : `Paused · ${playback.deviceName}`
+      : playbackReady && playback?.trackId
         ? "Paused · this browser"
         : null;
 
-  const duration = useSdk
-    ? sdkState?.duration ?? 0
-    : displayApi?.durationMs ?? sdkState?.duration ?? 0;
-
-  const position = useSdk
-    ? sdkState?.position ?? 0
-    : displayApi
-      ? smoothApiProgressMs
-      : sdkState?.position ?? 0;
-
+  const duration = playback?.durationMs ?? 0;
+  const position = displayProgressMs;
   const progress = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
-
-  const paused = useSdk
-    ? Boolean(sdkState?.paused ?? true)
-    : displayApi
-      ? !displayApi.isPlaying
-      : Boolean(sdkState?.paused ?? true);
+  const paused = !playback?.isPlaying;
 
   const canShowRate = Boolean(
     nowTrackId && hasAnyTrack && nowPlayingIsRateableTrack,
@@ -610,7 +417,7 @@ export function Player() {
     const x = e.clientX - rect.left;
     const ratio = Math.min(1, Math.max(0, x / rect.width));
     const ms = Math.floor(ratio * duration);
-    void seek(ms).then(() => refreshAll());
+    void seek(ms).then(() => refreshAfterTransport());
   };
 
   const onVolume = (vals: number[]) => {
@@ -618,21 +425,10 @@ export function Player() {
     setVolumePct(v);
     if (volumeFromSdk) {
       void setVolume(v / 100).catch(() => {
-        /* SDK not connected — slider is visual only */
+        /* SDK not connected */
       });
     }
   };
-
-  playerLog("Rendering:", {
-    showPlayer: hasToken,
-    trackName: hasAnyTrack ? trackTitle : "Nothing playing",
-    isPlaying: sdkPlaying
-      ? !sdkState?.paused
-      : isApiPlaybackWithTrack(apiPlayback)
-        ? apiPlayback.isPlaying
-        : false,
-    source: playbackSource,
-  });
 
   if (!hasToken) {
     return (
@@ -743,7 +539,7 @@ export function Player() {
             type="button"
             aria-label="Previous"
             className="rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            onClick={() => void previous().then(() => refreshAll())}
+            onClick={() => void previous().then(() => refreshAfterTransport())}
           >
             <SkipBack className="size-5" />
           </button>
@@ -751,7 +547,7 @@ export function Player() {
             type="button"
             aria-label={paused ? "Play" : "Pause"}
             className="flex size-10 shrink-0 items-center justify-center rounded-full bg-wam text-black shadow-md transition-transform hover:scale-[1.03] hover:bg-wam/90"
-            onClick={() => void (paused ? resume() : pause()).then(() => refreshAll())}
+            onClick={() => void (paused ? resume() : pause()).then(() => refreshAfterTransport())}
           >
             {paused ? (
               <Play className="size-[18px] fill-current" />
@@ -763,7 +559,7 @@ export function Player() {
             type="button"
             aria-label="Next"
             className="rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            onClick={() => void next().then(() => refreshAll())}
+            onClick={() => void next().then(() => refreshAfterTransport())}
           >
             <SkipForward className="size-5" />
           </button>
@@ -818,7 +614,7 @@ export function Player() {
               type="button"
               aria-label="Previous"
               className="rounded-full p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-              onClick={() => void previous().then(() => refreshAll())}
+              onClick={() => void previous().then(() => refreshAfterTransport())}
             >
               <SkipBack className="size-4" />
             </button>
@@ -826,7 +622,7 @@ export function Player() {
               type="button"
               aria-label={paused ? "Play" : "Pause"}
               className="flex size-9 shrink-0 items-center justify-center rounded-full bg-wam text-black shadow-md transition-transform hover:scale-[1.03] hover:bg-wam/90"
-              onClick={() => void (paused ? resume() : pause()).then(() => refreshAll())}
+              onClick={() => void (paused ? resume() : pause()).then(() => refreshAfterTransport())}
             >
               {paused ? (
                 <Play className="size-4 fill-current" />
@@ -838,7 +634,7 @@ export function Player() {
               type="button"
               aria-label="Next"
               className="rounded-full p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-              onClick={() => void next().then(() => refreshAll())}
+              onClick={() => void next().then(() => refreshAfterTransport())}
             >
               <SkipForward className="size-4" />
             </button>

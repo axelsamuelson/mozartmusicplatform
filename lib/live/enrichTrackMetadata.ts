@@ -35,14 +35,15 @@ export async function enrichTracksFromCacheAndSpotify(
     });
   }
 
-  if (accessToken) {
-    const missing = unique.filter((id) => !out.has(id) || !out.get(id)?.track_name);
-    if (missing.length > 0) {
-      const spotify = await fetchTrackMetadataBatch(accessToken, missing);
-      for (const [id, meta] of spotify) {
-        out.set(id, meta);
-      }
+  const missingIds = unique.filter((id) => !out.has(id) || !out.get(id)?.track_name);
+
+  if (missingIds.length > 0 && accessToken) {
+    const spotify = await fetchTrackMetadataBatch(accessToken, missingIds);
+    for (const [id, meta] of spotify) {
+      out.set(id, meta);
     }
+  } else if (missingIds.length > 0 && !accessToken) {
+    console.warn("[up-next] No host token, metadata may be incomplete");
   }
 
   for (const id of unique) {

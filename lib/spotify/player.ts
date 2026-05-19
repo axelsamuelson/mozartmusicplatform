@@ -6,6 +6,7 @@ export interface SpotifyWebPlaybackTrack {
   id: string;
   type: string;
   name: string;
+  duration_ms?: number;
   album: {
     name: string;
     images: { url: string }[];
@@ -17,6 +18,11 @@ export interface SpotifyWebPlaybackState {
   paused: boolean;
   position: number;
   duration: number;
+  context?: {
+    uri: string | null;
+    metadata: Record<string, unknown>;
+    type: string;
+  } | null;
   track_window: {
     current_track: SpotifyWebPlaybackTrack | null;
   };
@@ -84,7 +90,27 @@ let playbackDeviceId: string | null = null;
 let connectGeneration = 0;
 let pendingReadyReject: ((err: Error) => void) | null = null;
 
+type StateChangeListener = (state: SpotifyWebPlaybackState | null) => void;
+const stateChangeListeners = new Set<StateChangeListener>();
+
 const READY_TIMEOUT_MS = 30_000;
+
+export function registerStateChangeListener(listener: StateChangeListener): () => void {
+  stateChangeListeners.add(listener);
+  return () => {
+    stateChangeListeners.delete(listener);
+  };
+}
+
+function notifyStateChangeListeners(state: SpotifyWebPlaybackState | null): void {
+  for (const listener of stateChangeListeners) {
+    try {
+      listener(state);
+    } catch {
+      /* ignore listener errors */
+    }
+  }
+}
 
 export function spotifyUri(type: ItemType, spotifyId: string): string {
   return `spotify:${type}:${spotifyId}`;
@@ -367,6 +393,17 @@ async function connectWebPlaybackPlayer(
     console.error("[WAM Player] playback", message);
   });
 
+  (
+    player as SpotifyWebPlaybackPlayer & {
+      addListener(
+        event: "player_state_changed",
+        cb: (state: SpotifyWebPlaybackState | null) => void,
+      ): void;
+    }
+  ).addListener("player_state_changed", (state) => {
+    notifyStateChangeListeners(state ?? null);
+  });
+
   const connected = await player.connect();
   if (generation !== connectGeneration) {
     try {
@@ -433,6 +470,7 @@ export function disconnectPlayback(): void {
   connectGeneration++;
   abortPendingReady("Playback disconnected");
   connectPromise = null;
+  stateChangeListeners.clear();
 
   if (innerPlayer) {
     try {

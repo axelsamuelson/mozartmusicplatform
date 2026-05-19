@@ -24,6 +24,7 @@ type HubEntry = {
   scoresListeners: Set<() => void>;
   bufferListeners: Set<() => void>;
   sessionListeners: Set<(session: LiveSessionRow) => void>;
+  sessionEndedListeners: Set<() => void>;
   refCount: number;
   presenceMeta: PresenceMeta;
 };
@@ -65,6 +66,12 @@ function notifySession(entry: HubEntry, session: LiveSessionRow): void {
   }
 }
 
+function notifySessionEnded(entry: HubEntry): void {
+  for (const listener of entry.sessionEndedListeners) {
+    listener();
+  }
+}
+
 function syncPresence(entry: HubEntry): void {
   entry.participants = parsePresenceState(
     entry.channel.presenceState<PresencePayload>(),
@@ -100,6 +107,7 @@ function attachHub(
     onScoresChange?: () => void;
     onBufferChange?: () => void;
     onSessionUpdate?: (session: LiveSessionRow) => void;
+    onSessionEnded?: () => void;
   },
 ): HubEntry {
   const existing = hubs.get(sessionId);
@@ -121,6 +129,9 @@ function attachHub(
     if (callbacks?.onSessionUpdate) {
       existing.sessionListeners.add(callbacks.onSessionUpdate);
     }
+    if (callbacks?.onSessionEnded) {
+      existing.sessionEndedListeners.add(callbacks.onSessionEnded);
+    }
     if (existing.channel.state === "joined") {
       void trackPresence(existing);
     }
@@ -140,6 +151,7 @@ function attachHub(
     scoresListeners: new Set(),
     bufferListeners: new Set(),
     sessionListeners: new Set(),
+    sessionEndedListeners: new Set(),
     refCount: 1,
     presenceMeta: meta,
   };
@@ -157,6 +169,9 @@ function attachHub(
   }
   if (callbacks?.onSessionUpdate) {
     entry.sessionListeners.add(callbacks.onSessionUpdate);
+  }
+  if (callbacks?.onSessionEnded) {
+    entry.sessionEndedListeners.add(callbacks.onSessionEnded);
   }
 
   channel
@@ -221,7 +236,14 @@ function attachHub(
       },
       (payload) => {
         const row = payload.new as LiveSessionRow | undefined;
-        if (row?.id) notifySession(entry, row);
+        if (!row?.id) return;
+
+        if (row.ended_at || !row.is_active) {
+          notifySessionEnded(entry);
+          return;
+        }
+
+        notifySession(entry, row);
       },
     )
     .subscribe((status) => {
@@ -250,6 +272,7 @@ export function subscribeLiveSessionRealtime(options: {
   onScoresChange?: () => void;
   onBufferChange?: () => void;
   onSessionUpdate?: (session: LiveSessionRow) => void;
+  onSessionEnded?: () => void;
 }): LiveSessionRealtimeSubscription {
   const supabase = createClient();
   const entry = attachHub(supabase, options.sessionId, options.userId, options.meta, {
@@ -258,6 +281,7 @@ export function subscribeLiveSessionRealtime(options: {
     onScoresChange: options.onScoresChange,
     onBufferChange: options.onBufferChange,
     onSessionUpdate: options.onSessionUpdate,
+    onSessionEnded: options.onSessionEnded,
   });
 
   entry.listeners.add(options.onParticipants);
@@ -287,6 +311,9 @@ export function subscribeLiveSessionRealtime(options: {
       }
       if (options.onSessionUpdate) {
         entry.sessionListeners.delete(options.onSessionUpdate);
+      }
+      if (options.onSessionEnded) {
+        entry.sessionEndedListeners.delete(options.onSessionEnded);
       }
       entry.refCount -= 1;
       if (entry.refCount <= 0) {

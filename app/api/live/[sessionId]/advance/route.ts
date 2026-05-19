@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
 
 import {
-  acquireAdvanceLock,
   AdvanceInProgressError,
   releaseAdvanceLock,
+  requireAdvanceLock,
 } from "@/lib/live/advanceLock";
 import { advanceJamsSession } from "@/lib/live/jamsAdvance";
 import { HostTokenExpiredError } from "@/lib/live/getHostToken";
@@ -60,7 +60,7 @@ export async function POST(
   }
 
   try {
-    await acquireAdvanceLock(admin, sessionId);
+    await requireAdvanceLock(admin, sessionId);
   } catch (e) {
     if (e instanceof AdvanceInProgressError) {
       return NextResponse.json(

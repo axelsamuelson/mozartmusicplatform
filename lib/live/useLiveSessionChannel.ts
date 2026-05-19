@@ -19,6 +19,7 @@ export function useLiveSessionChannel(options: {
   onScoresChange?: () => void;
   onBufferChange?: () => void;
   onSessionUpdate?: (session: LiveSessionRow) => void;
+  onSessionEnded?: () => void;
 }): { participants: LivePresenceMember[]; connected: boolean } {
   const {
     sessionId,
@@ -32,6 +33,7 @@ export function useLiveSessionChannel(options: {
     onScoresChange,
     onBufferChange,
     onSessionUpdate,
+    onSessionEnded,
   } = options;
 
   const [participants, setParticipants] = useState<LivePresenceMember[]>([]);
@@ -44,11 +46,13 @@ export function useLiveSessionChannel(options: {
   const onScoresChangeRef = useRef(onScoresChange);
   const onBufferChangeRef = useRef(onBufferChange);
   const onSessionUpdateRef = useRef(onSessionUpdate);
+  const onSessionEndedRef = useRef(onSessionEnded);
   onRatingsChangeRef.current = onRatingsChange;
   onQueueChangeRef.current = onQueueChange;
   onScoresChangeRef.current = onScoresChange;
   onBufferChangeRef.current = onBufferChange;
   onSessionUpdateRef.current = onSessionUpdate;
+  onSessionEndedRef.current = onSessionEnded;
 
   useEffect(() => {
     if (!enabled || !sessionId || !userId) {
@@ -70,6 +74,7 @@ export function useLiveSessionChannel(options: {
       onScoresChange: () => onScoresChangeRef.current?.(),
       onBufferChange: () => onBufferChangeRef.current?.(),
       onSessionUpdate: (session) => onSessionUpdateRef.current?.(session),
+      onSessionEnded: () => onSessionEndedRef.current?.(),
     });
     subscriptionRef.current = sub;
 

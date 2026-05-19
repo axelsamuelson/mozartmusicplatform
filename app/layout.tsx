@@ -3,7 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import { AuroraBackground } from "@/components/AuroraBackground";
 import { Navigation } from "@/components/Navigation";
-import { Player } from "@/components/Player";
+import { PlayerLoader } from "@/components/PlayerLoader";
 import { Toaster } from "sonner";
 import "./globals.css";
 
@@ -51,7 +51,7 @@ export default function RootLayout({
       <body className="relative min-h-full flex flex-col bg-background text-foreground font-sans antialiased">
         <AuroraBackground />
         <Navigation />
-        <Player />
+        <PlayerLoader />
         <Toaster theme="dark" position="bottom-center" richColors />
         <div className="relative z-10 flex min-h-0 flex-1 flex-col pb-[var(--wam-player-pad,0px)]">
           {children}

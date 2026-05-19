@@ -31,6 +31,10 @@ export const dynamic = "force-dynamic";
 
 const IS_DEV = process.env.NODE_ENV === "development";
 
+function withServerTime<T extends SpotifyPlaybackApiResponse>(body: T) {
+  return { ...body, serverTime: Date.now() };
+}
+
 function playbackJson(
   body: SpotifyPlaybackApiResponse,
   userId: string,
@@ -38,7 +42,7 @@ function playbackJson(
   setDedupedPlayback(userId, body);
   setLastKnownPlayback(userId, body);
   const circuit = getSpotifyCircuitState();
-  return NextResponse.json(body, {
+  return NextResponse.json(withServerTime(body), {
     headers: {
       "Cache-Control": CACHE_NO_STORE,
       "X-WAM-Circuit": circuit,
@@ -51,7 +55,7 @@ function fallbackPlayback(userId: string): NextResponse {
     getDedupedPlayback(userId) ??
     getLastKnownPlayback(userId) ?? { isPlaying: false };
   const circuit = getSpotifyCircuitState();
-  return NextResponse.json(last, {
+  return NextResponse.json(withServerTime(last), {
     headers: {
       "Cache-Control": CACHE_NO_STORE,
       "X-WAM-Circuit": circuit,
@@ -137,7 +141,7 @@ export async function GET() {
         trackId: "trackId" in deduped ? deduped.trackId : null,
       });
     }
-    return NextResponse.json(deduped, {
+    return NextResponse.json(withServerTime(deduped), {
       headers: {
         "Cache-Control": CACHE_NO_STORE,
         "X-WAM-Circuit": circuit,

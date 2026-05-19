@@ -34,11 +34,15 @@ export function LiveNowPlaying({ session, className }: LiveNowPlayingProps) {
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
   }, [
+    session,
     session.is_playing,
     session.progress_ms,
     session.duration_ms,
     session.playback_updated_at,
     session.spotify_track_id,
+    session.track_name,
+    session.artist_name,
+    session.image_url,
   ]);
 
   const duration = session.duration_ms ?? 0;
@@ -47,7 +51,10 @@ export function LiveNowPlaying({ session, className }: LiveNowPlayingProps) {
   const hasTrack = Boolean(session.spotify_track_id && session.track_name);
 
   return (
-    <article className={cn(glassCard, "flex flex-col items-center gap-4 text-center", className)}>
+    <article
+      key={session.spotify_track_id ?? "idle"}
+      className={cn(glassCard, "flex flex-col items-center gap-4 text-center", className)}
+    >
       <LiveArt session={session} hasTrack={hasTrack} />
 
       <div className="w-full min-w-0">

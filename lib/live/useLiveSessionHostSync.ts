@@ -12,6 +12,12 @@ import { createClient } from "@/lib/supabase/client";
 /** Host live sync — avoid hammering GET /v1/me/player (Spotify rate limits). */
 const SYNC_INTERVAL_MS = 12_000;
 
+export type LiveSessionHostSyncOptions = {
+  enabled: boolean;
+  /** Fired when PATCH /sync reports a new spotify_track_id (host → Player UI). */
+  onTrackChanged?: () => void;
+};
+
 function shouldSkipSyncForActiveSession(
   ref: NonNullable<ReturnType<typeof getActiveLiveSession>>,
   hostUserId: string | null,
@@ -25,8 +31,11 @@ function shouldSkipSyncForActiveSession(
 }
 
 /** Host only: push Spotify playback into live_sessions for participants. */
-export function useLiveSessionHostSync(enabled: boolean): void {
+export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): void {
+  const { enabled, onTrackChanged } = options;
   const lastTrackIdRef = useRef<string | null>(null);
+  const onTrackChangedRef = useRef(onTrackChanged);
+  onTrackChangedRef.current = onTrackChanged;
 
   useEffect(() => {
     if (!enabled) return;
@@ -60,9 +69,16 @@ export function useLiveSessionHostSync(enabled: boolean): void {
         if (!res.ok || cancelled) return;
         const body = (await res.json()) as {
           session?: { spotify_track_id?: string | null };
+          unchanged?: boolean;
         };
         const trackId = body.session?.spotify_track_id ?? null;
-        if (force || trackId !== lastTrackIdRef.current) {
+        const prev = lastTrackIdRef.current;
+        if (trackId !== prev) {
+          lastTrackIdRef.current = trackId;
+          if (trackId && trackId !== prev) {
+            onTrackChangedRef.current?.();
+          }
+        } else if (force) {
           lastTrackIdRef.current = trackId;
         }
       } catch {

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { enrichTracksFromCacheAndSpotify } from "@/lib/live/enrichTrackMetadata";
+import { getHostToken } from "@/lib/live/getHostToken";
 import { loadUpNextTracks } from "@/lib/live/jamsUpNext";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { usesJamsAdvance } from "@/lib/live/sessionMode";
@@ -39,7 +40,19 @@ export async function GET(
     const admin = createAdminClient();
     const items = await loadUpNextTracks(admin, sessionId);
     const trackIds = items.map((i) => i.spotify_track_id);
-    const meta = await enrichTracksFromCacheAndSpotify(admin, trackIds);
+
+    let hostToken: string | null = null;
+    try {
+      hostToken = await getHostToken(admin, session);
+    } catch {
+      hostToken = null;
+    }
+
+    const meta = await enrichTracksFromCacheAndSpotify(
+      admin,
+      trackIds,
+      hostToken ?? undefined,
+    );
 
     const enriched = items.map((item) => {
       const m = meta.get(item.spotify_track_id);

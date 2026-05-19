@@ -80,6 +80,10 @@ export async function PATCH(
     return NextResponse.json({ session, unchanged: true });
   }
 
+  if (process.env.NODE_ENV === "development") {
+    console.log("[sync] updating track:", patch.spotify_track_id);
+  }
+
   const { data: updated, error: updateErr } = await supabase
     .from("live_sessions")
     .update(patch)
