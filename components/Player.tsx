@@ -22,6 +22,7 @@ import {
 } from "@/lib/live/activeSessionStorage";
 import {
   ensureActiveLiveSessionMetadata,
+  shouldEnableLiveSessionHostSync,
   shouldHostSkipPlaybackApiPoll,
 } from "@/lib/live/activeSessionMeta";
 import { useLiveSessionHostSync } from "@/lib/live/useLiveSessionHostSync";
@@ -127,6 +128,7 @@ export function Player() {
   const [hasUser, setHasUser] = useState(false);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [skipApiPoll, setSkipApiPoll] = useState(false);
+  const [hostSyncEnabled, setHostSyncEnabled] = useState(false);
   const [hasToken, setHasToken] = useState(false);
   const [playbackReady, setPlaybackReady] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -151,21 +153,23 @@ export function Player() {
     enabled: hasUser && hasToken,
   });
 
-  const refreshSkipApiPoll = useCallback(() => {
+  const refreshLiveSessionPolling = useCallback(() => {
     const active = getActiveLiveSession();
     if (active?.isActive === false) {
       clearActiveLiveSession();
       setSkipApiPoll(false);
+      setHostSyncEnabled(false);
       return;
     }
     setSkipApiPoll(shouldHostSkipPlaybackApiPoll(active, currentUserId));
+    setHostSyncEnabled(shouldEnableLiveSessionHostSync(active, currentUserId));
   }, [currentUserId]);
 
   useEffect(() => {
-    void ensureActiveLiveSessionMetadata().then(() => refreshSkipApiPoll());
+    void ensureActiveLiveSessionMetadata().then(() => refreshLiveSessionPolling());
     const onSessionChange = () => {
       void ensureActiveLiveSessionMetadata().then(() => {
-        refreshSkipApiPoll();
+        refreshLiveSessionPolling();
         const active = getActiveLiveSession();
         if (active && shouldHostSkipPlaybackApiPoll(active, currentUserId)) {
           void refreshAfterTransport();
@@ -175,10 +179,10 @@ export function Player() {
     };
     window.addEventListener("wam-live-session-changed", onSessionChange);
     return () => window.removeEventListener("wam-live-session-changed", onSessionChange);
-  }, [currentUserId, fetchApiPlayback, refreshAfterTransport, refreshSkipApiPoll]);
+  }, [currentUserId, fetchApiPlayback, refreshAfterTransport, refreshLiveSessionPolling]);
 
   useLiveSessionHostSync({
-    enabled: hasUser && hasToken && !skipApiPoll,
+    enabled: hasUser && hasToken && hostSyncEnabled,
     onTrackChanged: () => {
       void refreshAfterTransport();
     },
@@ -235,7 +239,7 @@ export function Player() {
       setHasUser(Boolean(user));
       setCurrentUserId(user?.id ?? null);
       setHasToken(tokenOk);
-      refreshSkipApiPoll();
+      refreshLiveSessionPolling();
 
       if (!user || !tokenOk) {
         disconnectPlayback();
@@ -292,7 +296,7 @@ export function Player() {
       unregisterPlaybackTokenProvider();
       disconnectPlayback();
     };
-  }, [applyPlayback, fetchApiPlayback, refreshSkipApiPoll]);
+  }, [applyPlayback, fetchApiPlayback, refreshLiveSessionPolling]);
 
   const fromSdk = playback?.source === "sdk";
   const hasAnyTrack = Boolean(playback?.trackId);

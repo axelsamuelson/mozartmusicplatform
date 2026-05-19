@@ -78,7 +78,9 @@ async function fallbackFromHostPlaylist(
   sessionId: string,
   hostUserId: string,
 ): Promise<LiveQueueRow | null> {
-  const playback = await fetchCurrentPlayback(hostToken);
+  const playback = await fetchCurrentPlayback(hostToken, {
+    userId: hostUserId,
+  });
   const pid =
     playback?.contextUri?.match(/spotify:playlist:([a-zA-Z0-9]+)/)?.[1] ?? null;
   if (!pid) return null;

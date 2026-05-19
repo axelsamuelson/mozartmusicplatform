@@ -1,8 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { persistHostProviderToken } from "@/lib/live/getHostToken";
 import { playbackToSessionPatch } from "@/lib/live/mapPlaybackToSession";
 import { generateSessionCode, normalizeSessionCode } from "@/lib/utils/sessionCode";
 import { fetchCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 import type { LiveSessionRow } from "@/lib/types/live";
@@ -82,7 +84,7 @@ export async function POST() {
     return NextResponse.json({ error: msg || "Auth failed" }, { status: 401 });
   }
 
-  const playback = await fetchCurrentPlayback(accessToken);
+  const playback = await fetchCurrentPlayback(accessToken, { userId: user.id });
   if (!playback?.trackId || playback.itemKind !== "track") {
     return NextResponse.json(
       { error: "Start playing a track on Spotify before starting a live session." },
@@ -117,6 +119,19 @@ export async function POST() {
       { error: insertErr?.message ?? "Failed to create session" },
       { status: 500 },
     );
+  }
+
+  try {
+    const { data: authData } = await supabase.auth.getSession();
+    const admin = createAdminClient();
+    await persistHostProviderToken(admin, inserted.id as string, accessToken, {
+      refreshToken: authData.session?.provider_refresh_token ?? null,
+      expiresInSec: 3600,
+    });
+  } catch (e) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[live] Could not persist host Spotify token on create:", e);
+    }
   }
 
   return NextResponse.json({

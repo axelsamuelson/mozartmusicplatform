@@ -202,7 +202,10 @@ export async function PATCH(
 
   const session = updated as LiveSessionRow;
 
-  if (hasWamPlayback && body.wam_controls_playback) {
+  if (
+    (hasWamPlayback && body.wam_controls_playback) ||
+    (hasJukebox && body.jukebox_enabled)
+  ) {
     try {
       const token = await requireProviderAccessToken(supabase);
       const { data: authData } = await supabase.auth.getSession();

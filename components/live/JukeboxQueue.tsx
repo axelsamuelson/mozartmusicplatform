@@ -134,10 +134,10 @@ function QueueRow({
 
       {!hideQueueNames ? (
         <span className="max-w-[72px] shrink-0 truncate text-[10px] text-white/55">
-          {fromPlayback ? "Up next" : (item.display_name ?? "User")}
+          {item.display_name ?? (fromPlayback ? "Host" : "User")}
         </span>
       ) : fromPlayback ? (
-        <span className="max-w-[72px] shrink-0 truncate text-[10px] text-white/40">Up next</span>
+        <span className="max-w-[72px] shrink-0 truncate text-[10px] text-white/40">Host</span>
       ) : null}
 
       {isOwn && onRemove && !isCurrent && item.kind === "queued" ? (

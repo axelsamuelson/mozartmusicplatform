@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { fetchTrackMetadataBatch } from "@/lib/spotify/batchTrackMetadata";
+import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 
 export type TrackMetadataFields = {
   spotify_track_id: string;
@@ -37,7 +38,7 @@ export async function enrichTracksFromCacheAndSpotify(
 
   const missingIds = unique.filter((id) => !out.has(id) || !out.get(id)?.track_name);
 
-  if (missingIds.length > 0 && accessToken) {
+  if (missingIds.length > 0 && accessToken && !isSpotifyCircuitOpen()) {
     const spotify = await fetchTrackMetadataBatch(accessToken, missingIds);
     for (const [id, meta] of spotify) {
       out.set(id, meta);

@@ -1,6 +1,10 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { fetchHostPlaybackUpcoming } from "@/lib/live/hostPlaybackUpcoming";
+import {
+  getCachedPlaybackQueueDisplay,
+  setCachedPlaybackQueueDisplay,
+} from "@/lib/live/queueDisplayCache";
 import { shouldSkipHostPlaybackSync } from "@/lib/live/sessionMode";
 import type { LiveQueueRow, LiveSessionRow } from "@/lib/types/live";
 
@@ -38,10 +42,17 @@ function queuedToDisplay(item: LiveQueueRow): LiveQueueDisplayItem {
   };
 }
 
+export type BuildLiveQueueDisplayOptions = {
+  callerUserId?: string;
+  /** When the host loads the queue, pass their Spotify token (cookie session). */
+  hostAccessToken?: string;
+};
+
 export async function buildLiveQueueDisplay(
   admin: SupabaseClient,
   session: LiveSessionRow,
   pending: LiveQueueRow[],
+  options?: BuildLiveQueueDisplayOptions,
 ): Promise<LiveQueueDisplayItem[]> {
   const orderedPending = [...pending].sort((a, b) => a.position - b.position);
   const items = orderedPending.slice(0, LIVE_QUEUE_DISPLAY_LIMIT).map(queuedToDisplay);
@@ -53,6 +64,21 @@ export async function buildLiveQueueDisplay(
   const needed = LIVE_QUEUE_DISPLAY_LIMIT - items.length;
   if (needed <= 0) return items;
 
+  const cached = getCachedPlaybackQueueDisplay(
+    session.id,
+    session.spotify_track_id,
+    pending.length,
+  );
+  if (cached && cached.length > 0) {
+    let position = items.length;
+    for (const row of cached) {
+      if (items.length >= LIVE_QUEUE_DISPLAY_LIMIT) break;
+      position += 1;
+      items.push({ ...row, position });
+    }
+    return items;
+  }
+
   const exclude = new Set<string>();
   if (session.spotify_track_id) exclude.add(session.spotify_track_id);
   for (const row of pending) exclude.add(row.spotify_track_id);
@@ -62,13 +88,18 @@ export async function buildLiveQueueDisplay(
     session,
     needed,
     exclude,
+    {
+      callerUserId: options?.callerUserId,
+      hostAccessToken: options?.hostAccessToken,
+    },
   );
 
+  const playbackRows: LiveQueueDisplayItem[] = [];
   let position = items.length;
   for (const track of spotifyUpcoming) {
-    if (items.length >= LIVE_QUEUE_DISPLAY_LIMIT) break;
+    if (playbackRows.length >= needed) break;
     position += 1;
-    items.push({
+    playbackRows.push({
       kind: "playback",
       id: `playback:${track.spotify_track_id}:${position}`,
       spotify_track_id: track.spotify_track_id,
@@ -80,5 +111,14 @@ export async function buildLiveQueueDisplay(
     });
   }
 
-  return items;
+  if (playbackRows.length > 0) {
+    setCachedPlaybackQueueDisplay(
+      session.id,
+      session.spotify_track_id,
+      pending.length,
+      playbackRows,
+    );
+  }
+
+  return [...items, ...playbackRows];
 }

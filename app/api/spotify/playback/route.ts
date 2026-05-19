@@ -174,7 +174,7 @@ export async function GET() {
   }
 
   try {
-    const playback = await fetchCurrentPlayback(accessToken);
+    const playback = await fetchCurrentPlayback(accessToken, { userId: user.id });
     recordSpotifySuccess();
 
     if (IS_DEV) {

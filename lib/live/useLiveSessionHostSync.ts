@@ -6,11 +6,12 @@ import {
   clearActiveLiveSession,
   getActiveLiveSession,
 } from "@/lib/live/activeSessionStorage";
-import { shouldSkipHostPlaybackSync } from "@/lib/live/sessionMode";
+import { shouldEnableLiveSessionHostSync } from "@/lib/live/activeSessionMeta";
 import { createClient } from "@/lib/supabase/client";
 
-/** Host live sync — avoid hammering GET /v1/me/player (Spotify rate limits). */
-const SYNC_INTERVAL_MS = 12_000;
+/** Host live sync — conservative interval to protect Spotify rate limits. */
+const SYNC_INTERVAL_BASE_MS = 35_000;
+const SYNC_INTERVAL_MAX_MS = 90_000;
 
 export type LiveSessionHostSyncOptions = {
   enabled: boolean;
@@ -18,22 +19,12 @@ export type LiveSessionHostSyncOptions = {
   onTrackChanged?: () => void;
 };
 
-function shouldSkipSyncForActiveSession(
-  ref: NonNullable<ReturnType<typeof getActiveLiveSession>>,
-  hostUserId: string | null,
-): boolean {
-  if (!hostUserId || ref.hostUserId !== hostUserId) return false;
-  return shouldSkipHostPlaybackSync({
-    jams_enabled: Boolean(ref.jamsEnabled),
-    jukebox_enabled: Boolean(ref.jukeboxEnabled),
-    wam_controls_playback: Boolean(ref.wamControlsPlayback),
-  });
-}
-
 /** Host only: push Spotify playback into live_sessions for participants. */
 export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): void {
   const { enabled, onTrackChanged } = options;
   const lastTrackIdRef = useRef<string | null>(null);
+  const unchangedStreakRef = useRef(0);
+  const intervalMsRef = useRef(SYNC_INTERVAL_BASE_MS);
   const onTrackChangedRef = useRef(onTrackChanged);
   onTrackChangedRef.current = onTrackChanged;
 
@@ -41,6 +32,14 @@ export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): voi
     if (!enabled) return;
 
     let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    function scheduleNext() {
+      if (cancelled) return;
+      timeoutId = setTimeout(() => {
+        void syncPlayback(false).finally(scheduleNext);
+      }, intervalMsRef.current);
+    }
 
     async function syncPlayback(force = false) {
       const ref = getActiveLiveSession();
@@ -56,8 +55,7 @@ export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): voi
         data: { user },
       } = await supabase.auth.getUser();
       if (!user || cancelled) return;
-
-      if (shouldSkipSyncForActiveSession(ref, user.id)) {
+      if (!shouldEnableLiveSessionHostSync(ref, user.id)) {
         return;
       }
 
@@ -70,7 +68,21 @@ export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): voi
         const body = (await res.json()) as {
           session?: { spotify_track_id?: string | null };
           unchanged?: boolean;
+          syncSkipped?: boolean;
+          reason?: string;
         };
+
+        if (body.unchanged || body.syncSkipped) {
+          unchangedStreakRef.current += 1;
+          intervalMsRef.current = Math.min(
+            SYNC_INTERVAL_BASE_MS + unchangedStreakRef.current * 10_000,
+            SYNC_INTERVAL_MAX_MS,
+          );
+        } else {
+          unchangedStreakRef.current = 0;
+          intervalMsRef.current = SYNC_INTERVAL_BASE_MS;
+        }
+
         const trackId = body.session?.spotify_track_id ?? null;
         const prev = lastTrackIdRef.current;
         if (trackId !== prev) {
@@ -86,14 +98,18 @@ export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): voi
       }
     }
 
-    void syncPlayback(true);
-    const interval = window.setInterval(() => void syncPlayback(false), SYNC_INTERVAL_MS);
-    const onSessionStarted = () => void syncPlayback(true);
+    void syncPlayback(true).finally(scheduleNext);
+
+    const onSessionStarted = () => {
+      unchangedStreakRef.current = 0;
+      intervalMsRef.current = SYNC_INTERVAL_BASE_MS;
+      void syncPlayback(true);
+    };
     window.addEventListener("wam-live-session-changed", onSessionStarted);
 
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (timeoutId) clearTimeout(timeoutId);
       window.removeEventListener("wam-live-session-changed", onSessionStarted);
     };
   }, [enabled]);

@@ -495,8 +495,8 @@ async function fetchDevices(token: string): Promise<SpotifyDevice[]> {
   return data.devices ?? [];
 }
 
-const DEVICE_VISIBILITY_MAX_ATTEMPTS = 10;
-const DEVICE_VISIBILITY_POLL_MS = 1500;
+const DEVICE_VISIBILITY_MAX_ATTEMPTS = 5;
+const DEVICE_VISIBILITY_POLL_MS = 2_000;
 
 /** Web API may lag behind SDK `ready`; poll until this device id appears. */
 async function waitUntilDeviceVisible(

@@ -21,8 +21,9 @@ import {
 const PLAYBACK_POLLING_DISABLED =
   process.env.NEXT_PUBLIC_DISABLE_PLAYBACK_POLLING === "true";
 
-const IDLE_API_MS = 45_000;
-const EARLY_SKIP_MS = [12_000, 25_000] as const;
+const IDLE_API_MS = 60_000;
+/** Single early check for external-device skip (was 12s + 25s). */
+const EARLY_SKIP_MS = [20_000] as const;
 
 function isSdkPrimary(state: PlaybackState | null): boolean {
   return state?.source === "sdk" && Boolean(state.trackId);
@@ -180,6 +181,10 @@ export function useUnifiedPlayback(options: {
 
     try {
       const res = await fetch("/api/spotify/playback", { cache: "no-store" });
+      const circuit = res.headers.get("X-WAM-Circuit");
+      if (circuit === "open") {
+        return;
+      }
       const json = (await res.json()) as PlaybackApiPayload;
       if (!res.ok || typeof json.error === "string") return;
 

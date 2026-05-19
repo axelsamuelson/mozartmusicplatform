@@ -12,7 +12,8 @@ import {
 
 /** Recommended TTLs (seconds) per data type. */
 export const SPOTIFY_CACHE_TTL = {
-  playback: 0,
+  /** Short TTL — coalesce Player poll + host live sync on same user. */
+  playback: 15,
   search: 300,
   item: 86_400,
   playlistMeta: 3600,

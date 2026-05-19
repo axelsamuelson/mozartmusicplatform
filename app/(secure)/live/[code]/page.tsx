@@ -235,14 +235,6 @@ export default function LiveSessionPage() {
     ? sessionUsesHostPlaybackQueuePreview(session)
     : false;
 
-  useEffect(() => {
-    if (!session?.id || !showSongQueue || !usesPlaybackQueuePreview) return;
-    const id = window.setInterval(() => {
-      void loadQueue(session.id);
-    }, 20_000);
-    return () => window.clearInterval(id);
-  }, [session?.id, showSongQueue, usesPlaybackQueuePreview, loadQueue]);
-
   const {
     displayName,
     isAnonymous,

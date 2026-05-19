@@ -10,6 +10,7 @@ import {
   beginSpotifyHalfOpenProbe,
   recordSpotify429,
   recordSpotifySuccess,
+  withSpotifyUserThrottle,
 } from "@/lib/spotify/rateLimiter";
 
 const ME_PLAYER = "https://api.spotify.com/v1/me/player";
@@ -213,19 +214,29 @@ export async function fetchSpotifyPlaylistName(
   return meta.name;
 }
 
-/**
- * GET /v1/me/player — full playback state or null when nothing is playing / no player.
- * Does not resolve playlist display name; use `fetchSpotifyPlaylistName` in the route.
- */
-export async function fetchCurrentPlayback(
-  accessToken: string,
-): Promise<SpotifyCurrentPlayback | null> {
-  assertSpotifyCircuitAvailable();
-  if (!beginSpotifyHalfOpenProbe()) {
-    throw new SpotifyApiError(503, "Spotify circuit open");
-  }
+const memPlaybackByUser = new Map<
+  string,
+  { at: number; data: SpotifyCurrentPlayback | null }
+>();
+const MEM_PLAYBACK_MS = 12_000;
 
-  const res = await fetch(ME_PLAYER, {
+export type FetchCurrentPlaybackOptions = {
+  /** Enables shared cache + throttle (strongly recommended for server routes). */
+  userId?: string;
+  bypassCache?: boolean;
+};
+
+async function fetchCurrentPlaybackFromApi(
+  accessToken: string,
+  userId?: string,
+): Promise<SpotifyCurrentPlayback | null> {
+  const run = async () => {
+    assertSpotifyCircuitAvailable();
+    if (!beginSpotifyHalfOpenProbe()) {
+      throw new SpotifyApiError(503, "Spotify circuit open");
+    }
+
+    const res = await fetch(ME_PLAYER, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
   });
@@ -296,7 +307,7 @@ export async function fetchCurrentPlayback(
   return {
     isPlaying,
     ...base,
-    itemKind: isEpisode ? "episode" : "track",
+    itemKind: (isEpisode ? "episode" : "track") as "track" | "episode",
     progressMs,
     shuffleState: Boolean(data.shuffle_state),
     repeatState: normalizeRepeat(data.repeat_state),
@@ -306,4 +317,39 @@ export async function fetchCurrentPlayback(
     deviceName,
     deviceType,
   };
+  };
+
+  if (userId) {
+    return withSpotifyUserThrottle(userId, run);
+  }
+  return run();
+}
+
+/**
+ * GET /v1/me/player — full playback state or null when nothing is playing / no player.
+ * Does not resolve playlist display name; use `fetchSpotifyPlaylistName` in the route.
+ */
+export async function fetchCurrentPlayback(
+  accessToken: string,
+  options?: FetchCurrentPlaybackOptions,
+): Promise<SpotifyCurrentPlayback | null> {
+  const userId = options?.userId?.trim();
+  if (!userId || options?.bypassCache) {
+    return fetchCurrentPlaybackFromApi(accessToken, userId);
+  }
+
+  const mem = memPlaybackByUser.get(userId);
+  if (mem && Date.now() - mem.at < MEM_PLAYBACK_MS) {
+    return mem.data;
+  }
+
+  const data = await cachedSpotifyRequest(
+    `playback:me:${userId}`,
+    SPOTIFY_CACHE_TTL.playback,
+    () => fetchCurrentPlaybackFromApi(accessToken, userId),
+    { bypass: options?.bypassCache },
+  );
+
+  memPlaybackByUser.set(userId, { at: Date.now(), data });
+  return data;
 }

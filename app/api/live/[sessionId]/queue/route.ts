@@ -9,6 +9,7 @@ import {
   recomputeQueuePositions,
 } from "@/lib/live/jukeboxQueue";
 import { buildLiveQueueDisplay } from "@/lib/live/liveQueueDisplay";
+import { invalidatePlaybackQueueDisplayCache } from "@/lib/live/queueDisplayCache";
 import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { playQueueTrackOnHost } from "@/lib/live/songQueuePlayback";
@@ -21,6 +22,7 @@ import {
 import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 import type { LiveQueueRow } from "@/lib/types/live";
 
 export async function GET(
@@ -49,8 +51,20 @@ export async function GET(
     const queue = await loadPendingQueue(supabase, sessionId);
     const myCount = queue.filter((q) => q.user_id === user.id).length;
 
+    let hostAccessToken: string | undefined;
+    if (user.id === session.host_user_id) {
+      try {
+        hostAccessToken = await requireProviderAccessToken(supabase);
+      } catch {
+        hostAccessToken = undefined;
+      }
+    }
+
     const displayQueue = sessionHasQueue(session)
-      ? await buildLiveQueueDisplay(createAdminClient(), session, queue)
+      ? await buildLiveQueueDisplay(createAdminClient(), session, queue, {
+          callerUserId: user.id,
+          hostAccessToken,
+        })
       : [];
 
     return NextResponse.json({
@@ -193,6 +207,8 @@ export async function POST(
     );
   }
 
+  invalidatePlaybackQueueDisplayCache(sessionId);
+
   try {
     const admin = createAdminClient();
     await admin.from("live_scores").upsert(
@@ -228,8 +244,20 @@ export async function POST(
     }
 
     const queue = await loadPendingQueue(admin, sessionId);
+    let hostAccessToken: string | undefined;
+    if (user.id === sessionOut.host_user_id) {
+      try {
+        hostAccessToken = await requireProviderAccessToken(supabase);
+      } catch {
+        hostAccessToken = undefined;
+      }
+    }
+
     const displayQueue = sessionHasQueue(sessionOut)
-      ? await buildLiveQueueDisplay(admin, sessionOut, queue)
+      ? await buildLiveQueueDisplay(admin, sessionOut, queue, {
+          callerUserId: user.id,
+          hostAccessToken,
+        })
       : [];
     const myCount = queue.filter((q) => q.user_id === user.id).length;
     return NextResponse.json({

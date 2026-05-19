@@ -9,7 +9,11 @@ import {
   getEffectiveLiveSessionMode,
   shouldSkipHostPlaybackSync,
 } from "@/lib/live/sessionMode";
+import { persistHostProviderToken } from "@/lib/live/getHostToken";
+import { invalidatePlaybackQueueDisplayCache } from "@/lib/live/queueDisplayCache";
 import { fetchCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
+import { isSpotify429Error } from "@/lib/spotify/rateLimiter";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 import type { LiveSessionRow } from "@/lib/types/live";
@@ -79,7 +83,31 @@ export async function PATCH(
     return NextResponse.json({ error: msg || "Auth failed" }, { status: 401 });
   }
 
-  const playback = await fetchCurrentPlayback(accessToken);
+  let playback;
+  try {
+    playback = await fetchCurrentPlayback(accessToken, { userId: user.id });
+  } catch (e) {
+    if (isSpotify429Error(e) || (e instanceof Error && /circuit/i.test(e.message))) {
+      return NextResponse.json({
+        session,
+        unchanged: true,
+        syncSkipped: true,
+        reason: "spotify_unavailable",
+      });
+    }
+    const msg = e instanceof Error ? e.message : "Spotify playback unavailable";
+    return NextResponse.json({ error: msg }, { status: 502 });
+  }
+
+  try {
+    const { data: authData } = await supabase.auth.getSession();
+    await persistHostProviderToken(createAdminClient(), sessionId, accessToken, {
+      refreshToken: authData.session?.provider_refresh_token ?? null,
+      expiresInSec: 3600,
+    });
+  } catch {
+    /* non-fatal */
+  }
 
   const patch = playbackToSessionPatch(
     playback && "trackId" in playback && playback.itemKind === "track"
@@ -89,6 +117,10 @@ export async function PATCH(
 
   if (!sessionPlaybackChanged(session, patch)) {
     return NextResponse.json({ session, unchanged: true });
+  }
+
+  if (patch.spotify_track_id !== session.spotify_track_id) {
+    invalidatePlaybackQueueDisplayCache(sessionId);
   }
 
   if (process.env.NODE_ENV === "development") {

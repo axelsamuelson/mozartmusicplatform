@@ -4,6 +4,7 @@ import {
   getActiveLiveSession,
   setActiveLiveSession,
 } from "@/lib/live/activeSessionStorage";
+import { shouldSkipHostPlaybackSync } from "@/lib/live/sessionMode";
 
 export function activeLiveSessionRefFromRow(session: LiveSessionRow): ActiveLiveSessionRef {
   return {
@@ -50,10 +51,31 @@ export async function ensureActiveLiveSessionMetadata(): Promise<void> {
   }
 }
 
+/**
+ * Skip GET /api/spotify/playback when the host already mirrors via PATCH /sync
+ * (song queue, jams, or WAM-controlled playback).
+ */
 export function shouldHostSkipPlaybackApiPoll(
   active: ActiveLiveSessionRef | null,
   currentUserId: string | null,
 ): boolean {
-  if (!active?.wamControlsPlayback || !currentUserId) return false;
-  return active.hostUserId === currentUserId;
+  if (!active || !currentUserId) return false;
+  if (active.hostUserId !== currentUserId) return false;
+  if (active.wamControlsPlayback) return true;
+  if (active.jukeboxEnabled || active.jamsEnabled) return true;
+  return false;
+}
+
+/** Host-only PATCH /sync — one Spotify source instead of Player + sync overlap. */
+export function shouldEnableLiveSessionHostSync(
+  active: ActiveLiveSessionRef | null,
+  currentUserId: string | null,
+): boolean {
+  if (!active || !currentUserId) return false;
+  if (active.hostUserId !== currentUserId) return false;
+  return !shouldSkipHostPlaybackSync({
+    jams_enabled: Boolean(active.jamsEnabled),
+    jukebox_enabled: Boolean(active.jukeboxEnabled),
+    wam_controls_playback: Boolean(active.wamControlsPlayback),
+  });
 }
