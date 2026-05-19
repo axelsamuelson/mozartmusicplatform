@@ -25,6 +25,10 @@ import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
 import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
 import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
 import {
+  type LiveQueueDisplayItem,
+  sessionUsesHostPlaybackQueuePreview,
+} from "@/lib/live/liveQueueDisplay";
+import {
   getEffectiveLiveSessionMode,
   sessionHasQueue,
   sessionHasScores,
@@ -58,6 +62,7 @@ export default function LiveSessionPage() {
   const [allRatings, setAllRatings] = useState<LiveRatingRow[]>([]);
   const [aggregate, setAggregate] = useState<LiveSessionAggregate | null>(null);
   const [queue, setQueue] = useState<LiveQueueRow[]>([]);
+  const [displayQueue, setDisplayQueue] = useState<LiveQueueDisplayItem[]>([]);
   const [scores, setScores] = useState<LiveScoreRow[]>([]);
   const [myQueueCount, setMyQueueCount] = useState(0);
   const [genreTags, setGenreTags] = useState<GenreTagRow[]>([]);
@@ -131,12 +136,14 @@ export default function LiveSessionPage() {
     const body = (await res.json().catch(() => ({}))) as {
       error?: string;
       queue?: LiveQueueRow[];
+      displayQueue?: LiveQueueDisplayItem[];
       myQueueCount?: number;
       session?: LiveSessionRow;
     };
     if (!res.ok) throw new Error(body.error || "Could not load queue");
     if (body.session) applySession(body.session);
     setQueue(body.queue ?? []);
+    setDisplayQueue(body.displayQueue ?? []);
     setMyQueueCount(body.myQueueCount ?? 0);
   }, [applySession]);
 
@@ -223,6 +230,18 @@ export default function LiveSessionPage() {
 
     return () => ac.abort();
   }, [code, loadRatings, loadQueue, loadScores]);
+
+  const usesPlaybackQueuePreview = session
+    ? sessionUsesHostPlaybackQueuePreview(session)
+    : false;
+
+  useEffect(() => {
+    if (!session?.id || !showSongQueue || !usesPlaybackQueuePreview) return;
+    const id = window.setInterval(() => {
+      void loadQueue(session.id);
+    }, 20_000);
+    return () => window.clearInterval(id);
+  }, [session?.id, showSongQueue, usesPlaybackQueuePreview, loadQueue]);
 
   const {
     displayName,
@@ -319,7 +338,7 @@ export default function LiveSessionPage() {
       }
       if (!res.ok) throw new Error(body.error || "Could not advance queue");
       if (body.session) applySession(body.session);
-      if (body.queue) setQueue(body.queue);
+      await loadQueue(session.id);
       await loadScores(session.id);
       await loadRatings(session.id);
       toast.success(body.session?.spotify_track_id ? "Next track" : "Queue finished");
@@ -343,10 +362,7 @@ export default function LiveSessionPage() {
         queue?: LiveQueueRow[];
       };
       if (!res.ok) throw new Error(body.error || "Could not remove track");
-      if (body.queue) {
-        setQueue(body.queue);
-        setMyQueueCount(body.queue.filter((q) => q.user_id === userId).length);
-      }
+      await loadQueue(session.id);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not remove track");
     } finally {
@@ -470,10 +486,12 @@ export default function LiveSessionPage() {
           {showSongQueue ? (
             <>
               <JukeboxQueue
-                queue={queue}
+                items={displayQueue}
                 session={session}
                 userId={userId}
                 hideQueueNames={Boolean(session.hide_queue_names)}
+                usesPlaybackPreview={usesPlaybackQueuePreview}
+                userQueueOverflow={Math.max(0, queue.length - 5)}
                 onRemove={(id) => void handleRemoveFromQueue(id)}
                 removingId={removingId}
               />

@@ -3,32 +3,38 @@
 import Image from "next/image";
 import { X } from "lucide-react";
 
-import type { LiveQueueRow, LiveSessionRow } from "@/lib/types/live";
+import type { LiveQueueDisplayItem } from "@/lib/live/liveQueueDisplay";
+import type { LiveSessionRow } from "@/lib/types/live";
 import { glassCard } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 
 export type JukeboxQueueProps = {
-  queue: LiveQueueRow[];
+  items: LiveQueueDisplayItem[];
   session: LiveSessionRow;
   userId: string | null;
   /** Hide avatar + name beside each queued track (session setting). */
   hideQueueNames?: boolean;
+  /** Fills with host Spotify up next when the room queue is short. */
+  usesPlaybackPreview?: boolean;
   onRemove?: (queueId: string) => void;
   removingId?: string | null;
+  /** User-queued tracks beyond the 5 visible rows. */
+  userQueueOverflow?: number;
   className?: string;
 };
 
 export function JukeboxQueue({
-  queue,
+  items,
   session,
   userId,
   hideQueueNames = false,
+  usesPlaybackPreview = false,
   onRemove,
   removingId,
+  userQueueOverflow = 0,
   className,
 }: JukeboxQueueProps) {
-  const visible = queue.slice(0, 5);
-  const overflow = queue.length - visible.length;
+  const visible = items;
 
   return (
     <section className={cn(glassCard, className)}>
@@ -36,9 +42,11 @@ export function JukeboxQueue({
         Queue
       </h2>
 
-      {queue.length === 0 ? (
+      {items.length === 0 ? (
         <p className="py-6 text-center text-sm text-white/50">
-          Queue is empty — add a song!
+          {usesPlaybackPreview
+            ? "Nothing up next — play music on the host's Spotify."
+            : "Queue is empty — add a song!"}
         </p>
       ) : (
         <ul className="max-h-[280px] space-y-2 overflow-y-auto pr-1">
@@ -46,8 +54,10 @@ export function JukeboxQueue({
             <QueueRow
               key={item.id}
               item={item}
-              isCurrent={session.current_queue_id === item.id}
-              isOwn={userId === item.user_id}
+              isCurrent={
+                item.kind === "queued" && session.current_queue_id === item.id
+              }
+              isOwn={item.kind === "queued" && userId === item.user_id}
               hideQueueNames={hideQueueNames}
               onRemove={onRemove}
               removing={removingId === item.id}
@@ -56,8 +66,10 @@ export function JukeboxQueue({
         </ul>
       )}
 
-      {overflow > 0 ? (
-        <p className="mt-2 text-center text-xs text-white/40">+{overflow} more in queue</p>
+      {userQueueOverflow > 0 ? (
+        <p className="mt-2 text-center text-xs text-white/40">
+          +{userQueueOverflow} more in queue
+        </p>
       ) : null}
     </section>
   );
@@ -71,19 +83,22 @@ function QueueRow({
   onRemove,
   removing,
 }: {
-  item: LiveQueueRow;
+  item: LiveQueueDisplayItem;
   isCurrent: boolean;
   isOwn: boolean;
   hideQueueNames?: boolean;
   onRemove?: (id: string) => void;
   removing?: boolean;
 }) {
+  const fromPlayback = item.kind === "playback";
+
   return (
     <li
       className={cn(
         "flex items-center gap-2 rounded-lg border border-white/10 bg-white/5 p-2",
         isOwn && "border-l-2 border-l-wam",
         isCurrent && "ring-1 ring-wam/40",
+        fromPlayback && "border-dashed opacity-90",
       )}
     >
       <span className="w-5 shrink-0 text-center text-xs font-semibold tabular-nums text-white/50">
@@ -119,11 +134,13 @@ function QueueRow({
 
       {!hideQueueNames ? (
         <span className="max-w-[72px] shrink-0 truncate text-[10px] text-white/55">
-          {item.display_name ?? "User"}
+          {fromPlayback ? "Up next" : (item.display_name ?? "User")}
         </span>
+      ) : fromPlayback ? (
+        <span className="max-w-[72px] shrink-0 truncate text-[10px] text-white/40">Up next</span>
       ) : null}
 
-      {isOwn && onRemove && !isCurrent ? (
+      {isOwn && onRemove && !isCurrent && item.kind === "queued" ? (
         <button
           type="button"
           aria-label="Remove from queue"

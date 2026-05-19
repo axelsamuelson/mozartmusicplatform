@@ -49,11 +49,18 @@ export function sessionHasQueue(
   return mode === "queue" || mode === "jukebox" || mode === "jams";
 }
 
-/** Jukebox priority reordering — not FIFO queue or Jams. */
+/** Jukebox priority reordering — not round-robin or Jams. */
 export function usesJukeboxQueueOrdering(
   session: Pick<LiveSessionRow, "jams_enabled" | "jukebox_enabled">,
 ): boolean {
   return getEffectiveLiveSessionMode(session) === "jukebox";
+}
+
+/** Default song queue: rotate one track per participant (user1 → user2 → user3 → …). */
+export function usesRoundRobinQueueOrdering(
+  session: Pick<LiveSessionRow, "jams_enabled" | "jukebox_enabled">,
+): boolean {
+  return getEffectiveLiveSessionMode(session) === "queue";
 }
 
 export function usesJamsAdvance(

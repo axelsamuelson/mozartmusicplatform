@@ -483,7 +483,7 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
                           Song queue
                         </p>
                         <p className="mt-1 text-xs text-white/45">
-                          Guests add tracks — you press Next in order added.
+                          Guests take turns — one track each, then repeat (1→2→3→1…).
                         </p>
                       </div>
                       <AnonymousModeToggle

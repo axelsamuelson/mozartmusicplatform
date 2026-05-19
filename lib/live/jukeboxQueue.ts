@@ -1,13 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
-  assignFifoQueuePositions,
   assignQueuePositions,
-  pickNextFifoQueueItem,
   pickNextQueueItem,
   playedCountByUser,
 } from "@/lib/live/jukeboxPriority";
-import { usesJukeboxQueueOrdering } from "@/lib/live/sessionMode";
+import {
+  assignRoundRobinQueuePositions,
+  pickNextRoundRobinQueueItem,
+} from "@/lib/live/roundRobinQueue";
+import {
+  usesJukeboxQueueOrdering,
+  usesRoundRobinQueueOrdering,
+} from "@/lib/live/sessionMode";
 import type { LiveQueueRow, LiveScoreRow, LiveSessionRow } from "@/lib/types/live";
 
 export async function loadPendingQueue(
@@ -68,7 +73,9 @@ export async function recomputeQueuePositions(
 
   const updates = usesJukeboxQueueOrdering(session)
     ? assignQueuePositions(pending, scores, played, session.jukebox_ranking_mode)
-    : assignFifoQueuePositions(pending);
+    : usesRoundRobinQueueOrdering(session)
+      ? assignRoundRobinQueuePositions(pending, played)
+      : [];
 
   await Promise.all(
     updates.map(({ id, position }) =>
@@ -112,7 +119,9 @@ export async function pickAndApplyNextTrack(
   const playedCounts = playedCountByUser(allPlayedRows.data ?? []);
   const next = usesJukeboxQueueOrdering(session)
     ? pickNextQueueItem(pending, scores, playedCounts, session.jukebox_ranking_mode)
-    : pickNextFifoQueueItem(pending);
+    : usesRoundRobinQueueOrdering(session)
+      ? pickNextRoundRobinQueueItem(pending, playedCounts)
+      : null;
 
   if (!next) {
     const { data: cleared } = await admin

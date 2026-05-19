@@ -1,17 +1,22 @@
 import { type NextRequest, NextResponse } from "next/server";
 
+import { HostTokenExpiredError } from "@/lib/live/getHostToken";
 import {
   loadPendingQueue,
   loadPlayedQueue,
   loadSessionScores,
+  pickAndApplyNextTrack,
   recomputeQueuePositions,
 } from "@/lib/live/jukeboxQueue";
+import { buildLiveQueueDisplay } from "@/lib/live/liveQueueDisplay";
 import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
+import { playQueueTrackOnHost } from "@/lib/live/songQueuePlayback";
 import {
   getLiveSessionMode,
   sessionHasQueue,
   usesJukeboxQueueOrdering,
+  usesRoundRobinQueueOrdering,
 } from "@/lib/live/sessionMode";
 import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -43,8 +48,14 @@ export async function GET(
   try {
     const queue = await loadPendingQueue(supabase, sessionId);
     const myCount = queue.filter((q) => q.user_id === user.id).length;
+
+    const displayQueue = sessionHasQueue(session)
+      ? await buildLiveQueueDisplay(createAdminClient(), session, queue)
+      : [];
+
     return NextResponse.json({
       queue,
+      displayQueue,
       session,
       myQueueCount: myCount,
       maxPerUser: MAX_QUEUE_TRACKS_PER_USER,
@@ -120,6 +131,7 @@ export async function POST(
   }
 
   const pending = await loadPendingQueue(supabase, sessionId);
+  const queueWasEmpty = pending.length === 0;
   const myPending = pending.filter((q) => q.user_id === user.id);
 
   if (isManual) {
@@ -194,19 +206,57 @@ export async function POST(
       },
       { onConflict: "session_id,user_id", ignoreDuplicates: true },
     );
-    if (usesJukeboxQueueOrdering(session)) {
+    if (usesJukeboxQueueOrdering(session) || usesRoundRobinQueueOrdering(session)) {
       await recomputeQueuePositions(admin, session);
     }
+
+    let sessionOut = session;
+    const freshSession = (await loadActiveSession(admin, sessionId)) ?? session;
+    if (
+      usesRoundRobinQueueOrdering(freshSession) &&
+      queueWasEmpty &&
+      !freshSession.current_queue_id
+    ) {
+      const { nextTrack, session: updated } = await pickAndApplyNextTrack(
+        admin,
+        freshSession,
+      );
+      if (nextTrack) {
+        await playQueueTrackOnHost(admin, updated, nextTrack.spotify_track_id, user.id);
+        sessionOut = updated;
+      }
+    }
+
     const queue = await loadPendingQueue(admin, sessionId);
+    const displayQueue = sessionHasQueue(sessionOut)
+      ? await buildLiveQueueDisplay(admin, sessionOut, queue)
+      : [];
     const myCount = queue.filter((q) => q.user_id === user.id).length;
     return NextResponse.json({
       item: inserted as LiveQueueRow,
       queue,
+      displayQueue,
+      session: sessionOut,
       myQueueCount: myCount,
       maxPerUser: MAX_QUEUE_TRACKS_PER_USER,
     });
   } catch (e) {
+    if (e instanceof HostTokenExpiredError) {
+      return NextResponse.json(
+        {
+          error: "host_token_expired",
+          message: "Host needs to log out and in again",
+        },
+        { status: 401 },
+      );
+    }
     const msg = e instanceof Error ? e.message : "Failed to order queue";
+    if (msg === "HOST_TOKEN_MISSING") {
+      return NextResponse.json(
+        { error: "Host Spotify token missing. Host must reconnect Spotify." },
+        { status: 401 },
+      );
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

@@ -5,6 +5,8 @@ import {
   loadPendingQueue,
   pickAndApplyNextTrack,
 } from "@/lib/live/jukeboxQueue";
+import { HostTokenExpiredError } from "@/lib/live/getHostToken";
+import { playQueueTrackOnHost } from "@/lib/live/songQueuePlayback";
 import {
   getEffectiveLiveSessionMode,
   sessionHasScores,
@@ -92,6 +94,11 @@ export async function POST(
       admin,
       freshSession,
     );
+
+    if (nextTrack) {
+      await playQueueTrackOnHost(admin, updatedSession, nextTrack.spotify_track_id, user.id);
+    }
+
     const queue = await loadPendingQueue(admin, sessionId);
 
     return NextResponse.json({
@@ -100,7 +107,22 @@ export async function POST(
       queue,
     });
   } catch (e) {
+    if (e instanceof HostTokenExpiredError) {
+      return NextResponse.json(
+        {
+          error: "host_token_expired",
+          message: "Host needs to log out and in again",
+        },
+        { status: 401 },
+      );
+    }
     const msg = e instanceof Error ? e.message : "Failed to advance queue";
+    if (msg === "HOST_TOKEN_MISSING") {
+      return NextResponse.json(
+        { error: "Host Spotify token missing. Host must reconnect Spotify." },
+        { status: 401 },
+      );
+    }
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

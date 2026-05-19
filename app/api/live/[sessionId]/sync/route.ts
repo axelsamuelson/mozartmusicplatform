@@ -4,7 +4,11 @@ import {
   playbackToSessionPatch,
   sessionPlaybackChanged,
 } from "@/lib/live/mapPlaybackToSession";
-import { shouldSkipHostPlaybackSync } from "@/lib/live/sessionMode";
+import { loadPendingQueue } from "@/lib/live/jukeboxQueue";
+import {
+  getEffectiveLiveSessionMode,
+  shouldSkipHostPlaybackSync,
+} from "@/lib/live/sessionMode";
 import { fetchCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
@@ -52,6 +56,13 @@ export async function PATCH(
   const session = row as LiveSessionRow;
   if (shouldSkipHostPlaybackSync(session)) {
     return NextResponse.json({ session, unchanged: true, syncSkipped: true });
+  }
+
+  if (getEffectiveLiveSessionMode(session) === "queue") {
+    const pending = await loadPendingQueue(supabase, sessionId);
+    if (pending.length > 0 || session.current_queue_id) {
+      return NextResponse.json({ session, unchanged: true, syncSkipped: true });
+    }
   }
 
   let accessToken: string;
