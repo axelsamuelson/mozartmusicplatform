@@ -2,51 +2,21 @@ import { type NextRequest, NextResponse } from "next/server";
 
 import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
 import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
+import { maybeAutoFinalizeTrackScores } from "@/lib/live/jukeboxScores";
+import { loadSessionScores } from "@/lib/live/jukeboxQueue";
+import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { loadLiveRatingsForSession } from "@/lib/live/loadLiveRatings";
 import { persistLiveRatingToLibrary } from "@/lib/live/persistLiveRating";
+import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { createClient } from "@/lib/supabase/server";
-import type { LiveSessionRow } from "@/lib/types/live";
 import type { MoodTagRow } from "@/lib/types/ratings";
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-async function loadActiveSession(
-  supabase: Awaited<ReturnType<typeof createClient>>,
-  sessionId: string,
-): Promise<LiveSessionRow | null> {
-  const { data, error } = await supabase
-    .from("live_sessions")
-    .select("*")
-    .eq("id", sessionId)
-    .eq("is_active", true)
-    .gt("expires_at", new Date().toISOString())
-    .maybeSingle();
-
-  if (error) throw new Error(error.message);
-  return data ? (data as LiveSessionRow) : null;
-}
-
-function displayNameFromUser(user: {
-  email?: string | null;
-  user_metadata?: Record<string, unknown>;
-}): string {
-  const m = user.user_metadata ?? {};
-  const fromMeta =
-    (typeof m.full_name === "string" && m.full_name) ||
-    (typeof m.name === "string" && m.name) ||
-    (typeof m.display_name === "string" && m.display_name);
-  if (fromMeta) return fromMeta;
-  if (user.email) return user.email.split("@")[0] ?? "User";
-  return "User";
-}
 
 export async function GET(
   _request: Request,
   context: { params: Promise<{ sessionId: string }> },
 ) {
   const { sessionId } = await context.params;
-  if (!UUID_RE.test(sessionId)) {
+  if (!LIVE_SESSION_UUID_RE.test(sessionId)) {
     return NextResponse.json({ error: "Invalid session id" }, { status: 400 });
   }
 
@@ -76,7 +46,11 @@ export async function GET(
       (moods ?? []) as MoodTagRow[],
     );
 
-    return NextResponse.json({ ratings, aggregate, session, allRatings });
+    const scores = session.jukebox_enabled
+      ? await loadSessionScores(supabase, sessionId)
+      : undefined;
+
+    return NextResponse.json({ ratings, aggregate, session, allRatings, scores });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load ratings";
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -95,7 +69,7 @@ export async function POST(
   context: { params: Promise<{ sessionId: string }> },
 ) {
   const { sessionId } = await context.params;
-  if (!UUID_RE.test(sessionId)) {
+  if (!LIVE_SESSION_UUID_RE.test(sessionId)) {
     return NextResponse.json({ error: "Invalid session id" }, { status: 400 });
   }
 
@@ -142,13 +116,31 @@ export async function POST(
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
-  const display_name = displayNameFromUser(user);
+  let display_name: string;
+  try {
+    const resolved = await resolveLiveDisplayName(supabase, session, user);
+    display_name = resolved.displayName;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Could not resolve display name";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
 
   const trackId = session.spotify_track_id;
   if (!trackId) {
     return NextResponse.json(
       { error: "No track is playing in this session yet." },
       { status: 400 },
+    );
+  }
+
+  if (
+    session.jukebox_enabled &&
+    session.current_track_user_id &&
+    session.current_track_user_id === user.id
+  ) {
+    return NextResponse.json(
+      { error: "You cannot rate your own queued track in Jukebox mode" },
+      { status: 403 },
     );
   }
 
@@ -210,11 +202,22 @@ export async function POST(
     .order("level");
   const aggregate = aggregateLiveRatings(ratings, (moods ?? []) as MoodTagRow[]);
 
+  let scoresUpdate = null;
+  if (session.jukebox_enabled) {
+    scoresUpdate = await maybeAutoFinalizeTrackScores(supabase, session);
+  }
+
+  const scores = session.jukebox_enabled
+    ? await loadSessionScores(supabase, sessionId)
+    : undefined;
+
   return NextResponse.json({
     rating: saved,
     ratings,
     allRatings,
     aggregate,
     session,
+    scores,
+    scoresUpdate,
   });
 }

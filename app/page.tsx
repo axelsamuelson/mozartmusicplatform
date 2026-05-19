@@ -44,7 +44,7 @@ function IconPlaylist() {
 }
 
 type HomeProps = {
-  searchParams?: Promise<{ error?: string; reason?: string }>;
+  searchParams?: Promise<{ error?: string; reason?: string; next?: string }>;
 };
 
 export default async function Home({ searchParams }: HomeProps) {
@@ -63,6 +63,10 @@ export default async function Home({ searchParams }: HomeProps) {
     typeof params.reason === "string"
       ? decodeURIComponent(params.reason)
       : null;
+  const loginNext =
+    typeof params.next === "string" && params.next.startsWith("/")
+      ? params.next
+      : undefined;
 
   const features = [
     {
@@ -103,7 +107,7 @@ export default async function Home({ searchParams }: HomeProps) {
         <AuthErrorAlert authFailed={authFailed} reason={authReason} />
 
         <div className="animate-fade-in-buttons mb-12 flex flex-col items-center justify-center gap-4 sm:mb-16">
-          <SpotifyLoginButton />
+          <SpotifyLoginButton nextPath={loginNext} />
         </div>
 
         <div

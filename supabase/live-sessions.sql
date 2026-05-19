@@ -10,6 +10,7 @@ create table if not exists live_sessions (
   artist_name text,
   image_url text,
   is_active boolean default true,
+  anonymous_mode boolean not null default false,
   is_playing boolean default false,
   progress_ms integer default 0,
   duration_ms integer default 0,
@@ -105,3 +106,46 @@ drop index if exists live_ratings_session_user_track_uidx;
 
 create unique index if not exists live_ratings_session_user_track_uidx
   on live_ratings (session_id, user_id, spotify_track_id);
+
+alter table live_sessions
+  add column if not exists anonymous_mode boolean not null default false;
+
+create table if not exists live_session_aliases (
+  session_id uuid references live_sessions (id) on delete cascade not null,
+  user_id uuid references auth.users (id) on delete cascade not null,
+  alias text not null,
+  created_at timestamptz default now(),
+  primary key (session_id, user_id)
+);
+
+create unique index if not exists live_session_aliases_session_alias_uidx
+  on live_session_aliases (session_id, alias);
+
+alter table live_session_aliases enable row level security;
+
+drop policy if exists "Read aliases for active sessions" on live_session_aliases;
+create policy "Read aliases for active sessions"
+  on live_session_aliases for select
+  to authenticated
+  using (
+    exists (
+      select 1 from live_sessions ls
+      where ls.id = session_id
+        and ls.is_active = true
+        and ls.expires_at > now()
+    )
+  );
+
+drop policy if exists "Users insert own alias" on live_session_aliases;
+create policy "Users insert own alias"
+  on live_session_aliases for insert
+  to authenticated
+  with check (auth.uid() = user_id);
+
+-- Jukebox (see live-sessions-jukebox.sql for full migration)
+alter table live_sessions
+  add column if not exists jukebox_enabled boolean not null default false,
+  add column if not exists jukebox_ranking_mode text not null default 'points',
+  add column if not exists hide_queue_names boolean not null default false,
+  add column if not exists current_queue_id uuid,
+  add column if not exists current_track_user_id uuid references auth.users (id) on delete set null;

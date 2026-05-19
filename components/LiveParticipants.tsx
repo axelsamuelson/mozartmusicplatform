@@ -10,6 +10,8 @@ export type LiveParticipantsProps = {
   className?: string;
   size?: "sm" | "md";
   emptyLabel?: string;
+  /** Hide profile photos (anonymous sessions). */
+  hideAvatars?: boolean;
 };
 
 export function LiveParticipants({
@@ -17,6 +19,7 @@ export function LiveParticipants({
   className,
   size = "md",
   emptyLabel = "Waiting for others to join…",
+  hideAvatars = false,
 }: LiveParticipantsProps) {
   if (participants.length === 0) {
     return <p className="text-center text-sm text-white/40">{emptyLabel}</p>;
@@ -30,7 +33,9 @@ export function LiveParticipants({
         <li key={p.userId} className="flex flex-col items-center gap-1">
           <div className="relative">
             <Avatar className={cn(avatarSize, "border border-white/15")}>
-              {p.avatarUrl ? <AvatarImage src={p.avatarUrl} alt="" /> : null}
+              {!hideAvatars && p.avatarUrl ? (
+                <AvatarImage src={p.avatarUrl} alt="" />
+              ) : null}
               <AvatarFallback className="bg-white/10 text-[10px] text-white">
                 {liveInitials(p.displayName)}
               </AvatarFallback>

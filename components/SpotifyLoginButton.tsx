@@ -13,7 +13,7 @@ function formatWait(ms: number): string {
   return m > 0 ? `${m}:${s.toString().padStart(2, "0")}` : `${s}s`;
 }
 
-export function SpotifyLoginButton() {
+export function SpotifyLoginButton({ nextPath }: { nextPath?: string } = {}) {
   const [cooldownMs, setCooldownMs] = useState(0);
   const [loading, setLoading] = useState(false);
 
@@ -30,7 +30,7 @@ export function SpotifyLoginButton() {
     if (blocked || loading) return;
     setLoading(true);
     try {
-      await signInWithSpotifyClient();
+      await signInWithSpotifyClient(nextPath);
     } catch (e) {
       console.error("[SpotifyLoginButton]", e);
       window.location.assign("/?error=auth");

@@ -64,6 +64,10 @@ export async function PATCH(
 
   const playback = await fetchCurrentPlayback(accessToken);
   const session = row as LiveSessionRow;
+  if (session.jukebox_enabled) {
+    return NextResponse.json({ session, unchanged: true, jukebox: true });
+  }
+
   const patch = playbackToSessionPatch(
     playback && "trackId" in playback && playback.itemKind === "track"
       ? playback

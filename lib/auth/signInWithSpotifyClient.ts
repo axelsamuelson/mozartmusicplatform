@@ -26,9 +26,22 @@ function logOAuthRedirectUrl(label: string, url: string | null | undefined): voi
  * Client-side Spotify OAuth — scopes are sent from the browser in the authorize URL.
  * Callback is still handled server-side at /auth/callback.
  */
-export async function signInWithSpotifyClient(): Promise<void> {
+export async function signInWithSpotifyClient(nextPath?: string): Promise<void> {
   const supabase = createClient();
-  const redirectTo = `${window.location.origin}/auth/callback`;
+  const fromQuery =
+    typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("next")
+      : null;
+  const next =
+    nextPath ??
+    fromQuery ??
+    (typeof window !== "undefined"
+      ? sessionStorage.getItem("wam_pending_share")
+      : null) ??
+    "/dashboard";
+  const safeNext =
+    next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
+  const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(safeNext)}`;
 
   console.log("OAuth options:", { scopes: SPOTIFY_OAUTH_SCOPES, redirectTo });
 

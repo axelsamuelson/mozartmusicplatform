@@ -20,6 +20,8 @@ type HubEntry = {
   participants: LivePresenceMember[];
   listeners: Set<(members: LivePresenceMember[]) => void>;
   ratingsListeners: Set<() => void>;
+  queueListeners: Set<() => void>;
+  scoresListeners: Set<() => void>;
   sessionListeners: Set<(session: LiveSessionRow) => void>;
   refCount: number;
   presenceMeta: PresenceMeta;
@@ -93,6 +95,8 @@ function attachHub(
   meta: PresenceMeta,
   callbacks?: {
     onRatingsChange?: () => void;
+    onQueueChange?: () => void;
+    onScoresChange?: () => void;
     onSessionUpdate?: (session: LiveSessionRow) => void;
   },
 ): HubEntry {
@@ -102,6 +106,12 @@ function attachHub(
     existing.presenceMeta = meta;
     if (callbacks?.onRatingsChange) {
       existing.ratingsListeners.add(callbacks.onRatingsChange);
+    }
+    if (callbacks?.onQueueChange) {
+      existing.queueListeners.add(callbacks.onQueueChange);
+    }
+    if (callbacks?.onScoresChange) {
+      existing.scoresListeners.add(callbacks.onScoresChange);
     }
     if (callbacks?.onSessionUpdate) {
       existing.sessionListeners.add(callbacks.onSessionUpdate);
@@ -121,12 +131,20 @@ function attachHub(
     participants: [],
     listeners: new Set(),
     ratingsListeners: new Set(),
+    queueListeners: new Set(),
+    scoresListeners: new Set(),
     sessionListeners: new Set(),
     refCount: 1,
     presenceMeta: meta,
   };
   if (callbacks?.onRatingsChange) {
     entry.ratingsListeners.add(callbacks.onRatingsChange);
+  }
+  if (callbacks?.onQueueChange) {
+    entry.queueListeners.add(callbacks.onQueueChange);
+  }
+  if (callbacks?.onScoresChange) {
+    entry.scoresListeners.add(callbacks.onScoresChange);
   }
   if (callbacks?.onSessionUpdate) {
     entry.sessionListeners.add(callbacks.onSessionUpdate);
@@ -146,6 +164,30 @@ function attachHub(
       },
       () => {
         for (const cb of entry.ratingsListeners) cb();
+      },
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "live_queue",
+        filter: `session_id=eq.${sessionId}`,
+      },
+      () => {
+        for (const cb of entry.queueListeners) cb();
+      },
+    )
+    .on(
+      "postgres_changes",
+      {
+        event: "*",
+        schema: "public",
+        table: "live_scores",
+        filter: `session_id=eq.${sessionId}`,
+      },
+      () => {
+        for (const cb of entry.scoresListeners) cb();
       },
     )
     .on(
@@ -183,11 +225,15 @@ export function subscribeLiveSessionRealtime(options: {
   onParticipants: (members: LivePresenceMember[]) => void;
   onConnected?: (connected: boolean) => void;
   onRatingsChange?: () => void;
+  onQueueChange?: () => void;
+  onScoresChange?: () => void;
   onSessionUpdate?: (session: LiveSessionRow) => void;
 }): LiveSessionRealtimeSubscription {
   const supabase = createClient();
   const entry = attachHub(supabase, options.sessionId, options.userId, options.meta, {
     onRatingsChange: options.onRatingsChange,
+    onQueueChange: options.onQueueChange,
+    onScoresChange: options.onScoresChange,
     onSessionUpdate: options.onSessionUpdate,
   });
 
@@ -206,6 +252,12 @@ export function subscribeLiveSessionRealtime(options: {
       entry.listeners.delete(options.onParticipants);
       if (options.onRatingsChange) {
         entry.ratingsListeners.delete(options.onRatingsChange);
+      }
+      if (options.onQueueChange) {
+        entry.queueListeners.delete(options.onQueueChange);
+      }
+      if (options.onScoresChange) {
+        entry.scoresListeners.delete(options.onScoresChange);
       }
       if (options.onSessionUpdate) {
         entry.sessionListeners.delete(options.onSessionUpdate);

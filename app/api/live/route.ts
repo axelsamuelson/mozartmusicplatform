@@ -106,6 +106,7 @@ export async function POST() {
       code,
       host_user_id: user.id,
       is_active: true,
+      anonymous_mode: false,
       ...playbackPatch,
     })
     .select("*")
