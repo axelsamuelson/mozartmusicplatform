@@ -5,6 +5,12 @@ import {
   SPOTIFY_CACHE_TTL,
 } from "@/lib/spotify/cache";
 import { parseRetryAfterSec, SpotifyApiError } from "@/lib/spotify/errors";
+import {
+  assertSpotifyCircuitAvailable,
+  beginSpotifyHalfOpenProbe,
+  recordSpotify429,
+  recordSpotifySuccess,
+} from "@/lib/spotify/rateLimiter";
 
 const ME_PLAYER = "https://api.spotify.com/v1/me/player";
 
@@ -214,6 +220,11 @@ export async function fetchSpotifyPlaylistName(
 export async function fetchCurrentPlayback(
   accessToken: string,
 ): Promise<SpotifyCurrentPlayback | null> {
+  assertSpotifyCircuitAvailable();
+  if (!beginSpotifyHalfOpenProbe()) {
+    throw new SpotifyApiError(503, "Spotify circuit open");
+  }
+
   const res = await fetch(ME_PLAYER, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
@@ -224,6 +235,9 @@ export async function fetchCurrentPlayback(
 
   if (!res.ok) {
     const t = await res.text();
+    if (res.status === 429) {
+      recordSpotify429();
+    }
     throw new SpotifyApiError(
       res.status,
       t,
@@ -232,6 +246,8 @@ export async function fetchCurrentPlayback(
         : undefined,
     );
   }
+
+  recordSpotifySuccess();
 
   const text = await res.text();
   if (!text) return null;

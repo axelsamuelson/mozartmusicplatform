@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
 function isHostOrCoHost(
@@ -35,8 +36,16 @@ export async function POST(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  let admin;
+  try {
+    admin = createAdminClient();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Server configuration error";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
   const endedAt = new Date().toISOString();
-  const { data: updated, error } = await supabase
+  const { data: updated, error } = await admin
     .from("live_sessions")
     .update({ is_active: false, ended_at: endedAt })
     .eq("id", sessionId)
@@ -47,5 +56,5 @@ export async function POST(
     return NextResponse.json({ error: error?.message ?? "Failed to end session" }, { status: 500 });
   }
 
-  return NextResponse.json({ session: updated, summaryReady: true });
+  return NextResponse.json({ session: updated, summaryReady: true, ended: true });
 }

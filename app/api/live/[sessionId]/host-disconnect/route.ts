@@ -1,19 +1,31 @@
 import { NextResponse } from "next/server";
 
-import { persistHostProviderToken } from "@/lib/live/getHostToken";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
-import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 
+/** Beacon-friendly host disconnect (POST + JSON body). */
 export async function POST(
-  _request: Request,
+  request: Request,
   context: { params: Promise<{ sessionId: string }> },
 ) {
   const { sessionId } = await context.params;
   if (!LIVE_SESSION_UUID_RE.test(sessionId)) {
     return NextResponse.json({ error: "Invalid session id" }, { status: 400 });
   }
+
+  let body: { host_disconnected_at?: string };
+  try {
+    const text = await request.text();
+    body = text ? (JSON.parse(text) as { host_disconnected_at?: string }) : {};
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  const at =
+    typeof body.host_disconnected_at === "string"
+      ? body.host_disconnected_at
+      : new Date().toISOString();
 
   const supabase = await createClient();
   const {
@@ -27,15 +39,8 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
-  if (session.co_host_user_id !== user.id) {
-    return NextResponse.json({ error: "Only co-host can take over" }, { status: 403 });
-  }
-
-  let hostToken: string;
-  try {
-    hostToken = await requireProviderAccessToken(supabase);
-  } catch {
-    return NextResponse.json({ error: "Spotify token required" }, { status: 401 });
+  if (session.host_user_id !== user.id) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   let admin;
@@ -46,26 +51,14 @@ export async function POST(
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 
-  const { data: updated, error } = await admin
+  const { error } = await admin
     .from("live_sessions")
-    .update({
-      host_user_id: user.id,
-      co_host_user_id: session.host_user_id,
-      host_disconnected_at: null,
-    })
-    .eq("id", sessionId)
-    .select("*")
-    .single();
+    .update({ host_disconnected_at: at })
+    .eq("id", sessionId);
 
-  if (error || !updated) {
-    return NextResponse.json({ error: error?.message ?? "Takeover failed" }, { status: 500 });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 
-  const { data: authData } = await supabase.auth.getSession();
-  await persistHostProviderToken(admin, sessionId, hostToken, {
-    refreshToken: authData.session?.provider_refresh_token ?? null,
-    expiresInSec: 3600,
-  });
-
-  return NextResponse.json({ session: updated, ok: true });
+  return NextResponse.json({ ok: true });
 }

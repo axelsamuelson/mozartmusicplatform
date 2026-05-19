@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { createClient } from "@/lib/supabase/client";
+import type { LivePresenceMember } from "@/lib/types/live";
 import type { LiveSessionRow } from "@/lib/types/live";
 
 const TAKEOVER_MS = 5 * 60 * 1000;
@@ -11,68 +11,65 @@ const TAKEOVER_MS = 5 * 60 * 1000;
 export type WamJamsControllerProps = {
   session: LiveSessionRow;
   userId: string | null;
+  participants: LivePresenceMember[];
   onSessionUpdate?: (session: LiveSessionRow) => void;
 };
 
 export function WamJamsController({
   session,
   userId,
+  participants,
   onSessionUpdate,
 }: WamJamsControllerProps) {
   const [countdownMs, setCountdownMs] = useState<number | null>(null);
   const takeoverSentRef = useRef(false);
+  const disconnectSentRef = useRef(false);
 
   const isCoHost = Boolean(userId && session.co_host_user_id === userId);
   const isHost = Boolean(userId && session.host_user_id === userId);
 
+  const hostPresent = participants.some((p) => p.userId === session.host_user_id);
+
   const markHostDisconnected = useCallback(async () => {
-    if (!isHost) return;
+    if (!isHost || disconnectSentRef.current) return;
+    disconnectSentRef.current = true;
+    const at = new Date().toISOString();
     await fetch(`/api/live/${session.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ host_disconnected_at: at }),
+      keepalive: true,
     }).catch(() => undefined);
-    const supabase = createClient();
-    await supabase
-      .from("live_sessions")
-      .update({ host_disconnected_at: new Date().toISOString() })
-      .eq("id", session.id);
+  }, [isHost, session.id]);
+
+  useEffect(() => {
+    if (!isHost) return;
+    const onUnload = () => {
+      const blob = new Blob(
+        [JSON.stringify({ host_disconnected_at: new Date().toISOString() })],
+        { type: "application/json" },
+      );
+      navigator.sendBeacon(`/api/live/${session.id}/host-disconnect`, blob);
+    };
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
   }, [isHost, session.id]);
 
   useEffect(() => {
     if (!session.jams_enabled && !session.wam_controls_playback) return;
-
-    const supabase = createClient();
-    const channel = supabase.channel(`live-presence:${session.id}`);
-
-    channel
-      .on("presence", { event: "sync" }, () => {
-        const state = channel.presenceState();
-        const hostPresent = Object.values(state).some((presences) =>
-          (presences as { user_id?: string }[]).some((p) => p.user_id === session.host_user_id),
-        );
-
-        if (!hostPresent && !session.host_disconnected_at) {
-          void markHostDisconnected();
-        }
-      })
-      .subscribe(async (status) => {
-        if (status === "SUBSCRIBED" && userId) {
-          await channel.track({ user_id: userId, online_at: new Date().toISOString() });
-        }
-      });
-
-    return () => {
-      void supabase.removeChannel(channel);
-    };
+    if (hostPresent) {
+      disconnectSentRef.current = false;
+      return;
+    }
+    if (!session.host_disconnected_at) {
+      void markHostDisconnected();
+    }
   }, [
+    hostPresent,
     markHostDisconnected,
     session.host_disconnected_at,
-    session.host_user_id,
-    session.id,
     session.jams_enabled,
     session.wam_controls_playback,
-    userId,
   ]);
 
   useEffect(() => {

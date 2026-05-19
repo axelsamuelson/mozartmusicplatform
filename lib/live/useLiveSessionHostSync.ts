@@ -2,9 +2,27 @@
 
 import { useEffect, useRef } from "react";
 
-import { getActiveLiveSession } from "@/lib/live/activeSessionStorage";
+import {
+  clearActiveLiveSession,
+  getActiveLiveSession,
+} from "@/lib/live/activeSessionStorage";
+import { shouldSkipHostPlaybackSync } from "@/lib/live/sessionMode";
+import { createClient } from "@/lib/supabase/client";
 
-const SYNC_INTERVAL_MS = 4_000;
+/** Host live sync — avoid hammering GET /v1/me/player (Spotify rate limits). */
+const SYNC_INTERVAL_MS = 12_000;
+
+function shouldSkipSyncForActiveSession(
+  ref: NonNullable<ReturnType<typeof getActiveLiveSession>>,
+  hostUserId: string | null,
+): boolean {
+  if (!hostUserId || ref.hostUserId !== hostUserId) return false;
+  return shouldSkipHostPlaybackSync({
+    jams_enabled: Boolean(ref.jamsEnabled),
+    jukebox_enabled: Boolean(ref.jukeboxEnabled),
+    wam_controls_playback: Boolean(ref.wamControlsPlayback),
+  });
+}
 
 /** Host only: push Spotify playback into live_sessions for participants. */
 export function useLiveSessionHostSync(enabled: boolean): void {
@@ -18,6 +36,21 @@ export function useLiveSessionHostSync(enabled: boolean): void {
     async function syncPlayback(force = false) {
       const ref = getActiveLiveSession();
       if (!ref || cancelled) return;
+
+      if (ref.isActive === false) {
+        clearActiveLiveSession();
+        return;
+      }
+
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user || cancelled) return;
+
+      if (shouldSkipSyncForActiveSession(ref, user.id)) {
+        return;
+      }
 
       try {
         const res = await fetch(`/api/live/${ref.sessionId}/sync`, {

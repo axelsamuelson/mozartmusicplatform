@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 const AUTH_COOLDOWN_KEY = "wam_auth_cooldown_until_ms";
-const AUTH_COOLDOWN_MS = 5 * 60 * 1000;
+const AUTH_COOLDOWN_MS = 15 * 60 * 1000;
 
 type AuthErrorAlertProps = {
   authFailed?: boolean;

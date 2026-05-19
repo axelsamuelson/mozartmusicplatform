@@ -47,6 +47,12 @@ export function SourceSelector({ sessionId, onSelected, compact }: SourceSelecto
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (mine?.playlist_sync_status !== "loading") return;
+    const id = window.setInterval(() => void refresh(), 3000);
+    return () => window.clearInterval(id);
+  }, [mine?.playlist_sync_status, refresh]);
+
   async function setSource(
     sourceType: LiveSessionSourceType,
     spotifyPlaylistId?: string,
@@ -66,10 +72,14 @@ export function SourceSelector({ sessionId, onSelected, compact }: SourceSelecto
       });
       const body = (await res.json()) as {
         source?: LiveSessionSourceRow;
+        status?: string;
         error?: string;
       };
       if (!res.ok) throw new Error(body.error || "Failed to set source");
       setMine(body.source ?? null);
+      if (body.status === "loading") {
+        toast.info("Syncing playlist tracks in the background…");
+      }
       setPickerOpen(false);
       setEditingSource(false);
       toast.success("Music source updated");

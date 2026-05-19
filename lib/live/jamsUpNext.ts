@@ -4,7 +4,7 @@ import { getRoundRobinOrder, type RoundRobinParticipant } from "@/lib/live/slotS
 
 export type UpNextItem = {
   spotify_track_id: string;
-  track_name: string;
+  track_name: string | null;
   artist_name: string | null;
   image_url: string | null;
   user_id: string;

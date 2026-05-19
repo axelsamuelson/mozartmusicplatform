@@ -6,6 +6,13 @@ import {
   spotifyRefreshFromUser,
 } from "@/lib/spotify/spotifyTokenMetadata";
 import {
+  isSpotify429Error,
+  isSpotifyCircuitOpen,
+  recordSpotify429,
+  SPOTIFY_CIRCUIT_UNAVAILABLE_MSG,
+} from "@/lib/spotify/rateLimiter";
+import {
+  clearSpotifyTokenCache,
   getCachedSpotifyAccess,
   getInflightSpotifyRefresh,
   markSpotifyMetadataPersisted,
@@ -48,6 +55,10 @@ async function refreshSpotifyUserToken(
     }),
     cache: "no-store",
   });
+  if (res.status === 429) {
+    recordSpotify429();
+    throw new Error("Spotify rate limited — wait a few minutes before trying again");
+  }
   if (!res.ok) {
     const t = await res.text();
     throw new Error(`Spotify refresh failed (${res.status}): ${t.slice(0, 200)}`);
@@ -73,18 +84,26 @@ async function refreshAndCache(
   userId: string,
   refresh: string,
 ): Promise<string> {
-  const data = await refreshSpotifyUserToken(refresh);
-  setCachedSpotifyAccess(userId, data.access_token, data.expires_in);
-  await persistMetadataThrottled(supabase, userId, {
-    provider_refresh_token: data.refresh_token ?? refresh,
-    expiresIn: data.expires_in,
-  });
-  return data.access_token;
+  try {
+    const data = await refreshSpotifyUserToken(refresh);
+    setCachedSpotifyAccess(userId, data.access_token, data.expires_in);
+    await persistMetadataThrottled(supabase, userId, {
+      provider_refresh_token: data.refresh_token ?? refresh,
+      expiresIn: data.expires_in,
+    });
+    return data.access_token;
+  } catch (e) {
+    if (isSpotify429Error(e)) {
+      recordSpotify429();
+    }
+    clearSpotifyTokenCache(userId);
+    throw e;
+  }
 }
 
 /**
- * Spotify user access token: session provider_token when fresh, otherwise refresh
- * via provider_refresh_token (session or user_metadata from first login).
+ * Spotify user access token: in-memory cache → fresh session token → refresh.
+ * Does not call Spotify Web API for validation (avoids /v1/me rate limits).
  */
 export async function getValidProviderAccessToken(
   supabase: SupabaseClient,
@@ -103,6 +122,13 @@ export async function getValidProviderAccessToken(
   const cached = getCachedSpotifyAccess(userId);
   if (cached) return cached;
 
+  if (isSpotifyCircuitOpen()) {
+    if (session.provider_token) {
+      return session.provider_token;
+    }
+    throw new Error(SPOTIFY_CIRCUIT_UNAVAILABLE_MSG);
+  }
+
   if (sessionProviderTokenIsFresh(session.provider_token, user)) {
     return session.provider_token;
   }
@@ -114,6 +140,9 @@ export async function getValidProviderAccessToken(
     session.provider_refresh_token ?? spotifyRefreshFromUser(user);
 
   if (!refresh) {
+    if (session.provider_token) {
+      return session.provider_token;
+    }
     throw new Error("MISSING_SPOTIFY_REFRESH");
   }
 

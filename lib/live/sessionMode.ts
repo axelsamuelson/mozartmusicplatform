@@ -11,6 +11,11 @@ type SessionModeInput = Pick<
 export function getLiveSessionMode(
   session: Pick<LiveSessionRow, "jams_enabled" | "jukebox_enabled">,
 ): LiveSessionMode {
+  if (session.jams_enabled && session.jukebox_enabled) {
+    console.warn(
+      "[live] Session has both jams_enabled and jukebox_enabled; using jams mode",
+    );
+  }
   if (session.jams_enabled) return "jams";
   if (session.jukebox_enabled) return "jukebox";
   return "legacy";

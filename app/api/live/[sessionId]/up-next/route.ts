@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { enrichTracksFromCacheAndSpotify } from "@/lib/live/enrichTrackMetadata";
 import { loadUpNextTracks } from "@/lib/live/jamsUpNext";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { usesJamsAdvance } from "@/lib/live/sessionMode";
@@ -37,7 +38,23 @@ export async function GET(
   try {
     const admin = createAdminClient();
     const items = await loadUpNextTracks(admin, sessionId);
-    return NextResponse.json({ items, queue_mode: session.queue_mode ?? "transparent" });
+    const trackIds = items.map((i) => i.spotify_track_id);
+    const meta = await enrichTracksFromCacheAndSpotify(admin, trackIds);
+
+    const enriched = items.map((item) => {
+      const m = meta.get(item.spotify_track_id);
+      return {
+        ...item,
+        track_name: m?.track_name ?? item.track_name,
+        artist_name: m?.artist_name ?? item.artist_name,
+        image_url: m?.image_url ?? item.image_url,
+      };
+    });
+
+    return NextResponse.json({
+      items: enriched,
+      queue_mode: session.queue_mode ?? "transparent",
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load up next";
     return NextResponse.json({ error: msg }, { status: 500 });

@@ -1,5 +1,15 @@
 /** Server-side Spotify playback control for Jams host. */
 
+export class HostPlaybackError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "HostPlaybackError";
+    this.status = status;
+  }
+}
+
 export async function playTrackOnHostDevice(
   accessToken: string,
   spotifyTrackId: string,
@@ -23,7 +33,8 @@ export async function playTrackOnHostDevice(
   if (res.status === 204 || res.ok) return;
 
   const detail = await res.text().catch(() => "");
-  throw new Error(
+  throw new HostPlaybackError(
+    res.status,
     `Spotify play failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
   );
 }

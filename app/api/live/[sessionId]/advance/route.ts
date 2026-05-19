@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 
+import {
+  acquireAdvanceLock,
+  AdvanceInProgressError,
+  releaseAdvanceLock,
+} from "@/lib/live/advanceLock";
 import { advanceJamsSession } from "@/lib/live/jamsAdvance";
+import { HostTokenExpiredError } from "@/lib/live/getHostToken";
 import { loadPendingQueue } from "@/lib/live/jukeboxQueue";
 import { usesJamsAdvance } from "@/lib/live/sessionMode";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
@@ -54,6 +60,18 @@ export async function POST(
   }
 
   try {
+    await acquireAdvanceLock(admin, sessionId);
+  } catch (e) {
+    if (e instanceof AdvanceInProgressError) {
+      return NextResponse.json(
+        { error: "Advance already in progress" },
+        { status: 409 },
+      );
+    }
+    throw e;
+  }
+
+  try {
     const result = await advanceJamsSession(admin, supabase, session, user.id);
     const queue = await loadPendingQueue(admin, sessionId);
 
@@ -64,6 +82,15 @@ export async function POST(
       notice: result.notice ?? null,
     });
   } catch (e) {
+    if (e instanceof HostTokenExpiredError) {
+      return NextResponse.json(
+        {
+          error: "host_token_expired",
+          message: "Host needs to log out and in again",
+        },
+        { status: 401 },
+      );
+    }
     const msg = e instanceof Error ? e.message : "Failed to advance";
     if (msg === "HOST_TOKEN_MISSING") {
       return NextResponse.json(
@@ -72,5 +99,7 @@ export async function POST(
       );
     }
     return NextResponse.json({ error: msg }, { status: 500 });
+  } finally {
+    await releaseAdvanceLock(admin, sessionId);
   }
 }

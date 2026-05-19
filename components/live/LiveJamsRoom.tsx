@@ -52,6 +52,7 @@ export type LiveJamsRoomProps = {
     comment: string | null;
   }) => void;
   onRefresh: () => void;
+  bufferRefreshKey?: number;
 };
 
 export function LiveJamsRoom({
@@ -76,6 +77,7 @@ export function LiveJamsRoom({
   onEndSession,
   onSubmitRating,
   onRefresh,
+  bufferRefreshKey = 0,
 }: LiveJamsRoomProps) {
   const [tab, setTab] = useState<Tab>("now");
   const [sourceSet, setSourceSet] = useState(hasSource);
@@ -128,7 +130,12 @@ export function LiveJamsRoom({
 
   return (
     <>
-      <WamJamsController session={session} userId={userId} onSessionUpdate={onSessionUpdate} />
+      <WamJamsController
+        session={session}
+        userId={userId}
+        participants={participants}
+        onSessionUpdate={onSessionUpdate}
+      />
 
       <div className="mb-4 flex gap-2 lg:hidden">
         {(
@@ -164,6 +171,7 @@ export function LiveJamsRoom({
               session={session}
               userId={userId}
               hideNames={session.hide_queue_names}
+              refreshKey={bufferRefreshKey}
             />
           </div>
         </div>
@@ -174,6 +182,7 @@ export function LiveJamsRoom({
               session={session}
               userId={userId}
               hideNames={session.hide_queue_names}
+              refreshKey={bufferRefreshKey}
             />
           ) : (
             <>

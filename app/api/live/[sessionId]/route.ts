@@ -4,6 +4,7 @@ import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { createClient } from "@/lib/supabase/server";
 import { persistHostProviderToken } from "@/lib/live/getHostToken";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
+import { createAdminClient } from "@/lib/supabase/admin";
 import type {
   JukeboxRankingMode,
   LiveSessionRow,
@@ -61,6 +62,8 @@ type PatchBody = {
   ranking_visibility?: RankingVisibility;
   duration_minutes?: number | null;
   co_host_user_id?: string | null;
+  host_disconnected_at?: string | null;
+  advance_lock_at?: string | null;
 };
 
 export async function PATCH(
@@ -96,6 +99,8 @@ export async function PATCH(
     body.duration_minutes === null ||
     (typeof body.duration_minutes === "number" && body.duration_minutes > 0);
   const hasCoHost = body.co_host_user_id !== undefined;
+  const hasHostDisconnected = body.host_disconnected_at !== undefined;
+  const hasAdvanceLock = body.advance_lock_at !== undefined;
 
   if (
     !hasAnonymous &&
@@ -107,7 +112,9 @@ export async function PATCH(
     !hasQueueMode &&
     !hasRankingVisibility &&
     !hasDuration &&
-    !hasCoHost
+    !hasCoHost &&
+    !hasHostDisconnected &&
+    !hasAdvanceLock
   ) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
@@ -135,14 +142,27 @@ export async function PATCH(
   if (!row) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  if (row.host_user_id !== user.id) {
+  const isHost = row.host_user_id === user.id;
+  if (!isHost && !hasHostDisconnected) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (hasHostDisconnected && !isHost) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  if (!isHost && (hasJukebox || hasJams || hasWamPlayback || hasAnonymous || hasRankingMode || hasHideQueueNames || hasQueueMode || hasRankingVisibility || hasDuration || hasCoHost || hasAdvanceLock)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   const patch: Record<string, boolean | string | number | null> = {};
   if (hasAnonymous) patch.anonymous_mode = body.anonymous_mode!;
-  if (hasJukebox) patch.jukebox_enabled = body.jukebox_enabled!;
-  if (hasJams) patch.jams_enabled = body.jams_enabled!;
+  if (hasJukebox) {
+    patch.jukebox_enabled = body.jukebox_enabled!;
+    if (body.jukebox_enabled) patch.jams_enabled = false;
+  }
+  if (hasJams) {
+    patch.jams_enabled = body.jams_enabled!;
+    if (body.jams_enabled) patch.jukebox_enabled = false;
+  }
   if (hasWamPlayback) patch.wam_controls_playback = body.wam_controls_playback!;
   if (hasRankingMode) patch.jukebox_ranking_mode = body.jukebox_ranking_mode!;
   if (hasHideQueueNames) patch.hide_queue_names = body.hide_queue_names!;
@@ -150,6 +170,8 @@ export async function PATCH(
   if (hasRankingVisibility) patch.ranking_visibility = body.ranking_visibility!;
   if (hasDuration) patch.duration_minutes = body.duration_minutes ?? null;
   if (hasCoHost) patch.co_host_user_id = body.co_host_user_id ?? null;
+  if (hasHostDisconnected) patch.host_disconnected_at = body.host_disconnected_at ?? null;
+  if (hasAdvanceLock) patch.advance_lock_at = body.advance_lock_at ?? null;
 
   const { data: updated, error: updateErr } = await supabase
     .from("live_sessions")
@@ -170,7 +192,12 @@ export async function PATCH(
   if (hasWamPlayback && body.wam_controls_playback) {
     try {
       const token = await requireProviderAccessToken(supabase);
-      await persistHostProviderToken(supabase, sessionId, token);
+      const { data: authData } = await supabase.auth.getSession();
+      const admin = createAdminClient();
+      await persistHostProviderToken(admin, sessionId, token, {
+        refreshToken: authData.session?.provider_refresh_token ?? null,
+        expiresInSec: 3600,
+      });
     } catch {
       /* host can reconnect later */
     }

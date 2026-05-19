@@ -22,6 +22,7 @@ type HubEntry = {
   ratingsListeners: Set<() => void>;
   queueListeners: Set<() => void>;
   scoresListeners: Set<() => void>;
+  bufferListeners: Set<() => void>;
   sessionListeners: Set<(session: LiveSessionRow) => void>;
   refCount: number;
   presenceMeta: PresenceMeta;
@@ -97,6 +98,7 @@ function attachHub(
     onRatingsChange?: () => void;
     onQueueChange?: () => void;
     onScoresChange?: () => void;
+    onBufferChange?: () => void;
     onSessionUpdate?: (session: LiveSessionRow) => void;
   },
 ): HubEntry {
@@ -112,6 +114,9 @@ function attachHub(
     }
     if (callbacks?.onScoresChange) {
       existing.scoresListeners.add(callbacks.onScoresChange);
+    }
+    if (callbacks?.onBufferChange) {
+      existing.bufferListeners.add(callbacks.onBufferChange);
     }
     if (callbacks?.onSessionUpdate) {
       existing.sessionListeners.add(callbacks.onSessionUpdate);
@@ -133,6 +138,7 @@ function attachHub(
     ratingsListeners: new Set(),
     queueListeners: new Set(),
     scoresListeners: new Set(),
+    bufferListeners: new Set(),
     sessionListeners: new Set(),
     refCount: 1,
     presenceMeta: meta,
@@ -145,6 +151,9 @@ function attachHub(
   }
   if (callbacks?.onScoresChange) {
     entry.scoresListeners.add(callbacks.onScoresChange);
+  }
+  if (callbacks?.onBufferChange) {
+    entry.bufferListeners.add(callbacks.onBufferChange);
   }
   if (callbacks?.onSessionUpdate) {
     entry.sessionListeners.add(callbacks.onSessionUpdate);
@@ -193,6 +202,18 @@ function attachHub(
     .on(
       "postgres_changes",
       {
+        event: "*",
+        schema: "public",
+        table: "live_queue_buffer",
+        filter: `session_id=eq.${sessionId}`,
+      },
+      () => {
+        for (const cb of entry.bufferListeners) cb();
+      },
+    )
+    .on(
+      "postgres_changes",
+      {
         event: "UPDATE",
         schema: "public",
         table: "live_sessions",
@@ -227,6 +248,7 @@ export function subscribeLiveSessionRealtime(options: {
   onRatingsChange?: () => void;
   onQueueChange?: () => void;
   onScoresChange?: () => void;
+  onBufferChange?: () => void;
   onSessionUpdate?: (session: LiveSessionRow) => void;
 }): LiveSessionRealtimeSubscription {
   const supabase = createClient();
@@ -234,6 +256,7 @@ export function subscribeLiveSessionRealtime(options: {
     onRatingsChange: options.onRatingsChange,
     onQueueChange: options.onQueueChange,
     onScoresChange: options.onScoresChange,
+    onBufferChange: options.onBufferChange,
     onSessionUpdate: options.onSessionUpdate,
   });
 
@@ -258,6 +281,9 @@ export function subscribeLiveSessionRealtime(options: {
       }
       if (options.onScoresChange) {
         entry.scoresListeners.delete(options.onScoresChange);
+      }
+      if (options.onBufferChange) {
+        entry.bufferListeners.delete(options.onBufferChange);
       }
       if (options.onSessionUpdate) {
         entry.sessionListeners.delete(options.onSessionUpdate);

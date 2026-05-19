@@ -17,6 +17,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import {
+  activeLiveSessionRefFromRow,
+  syncActiveLiveSessionFromRow,
+} from "@/lib/live/activeSessionMeta";
+import {
   clearActiveLiveSession,
   getActiveLiveSession,
   setActiveLiveSession,
@@ -116,7 +120,9 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
         setSession(null);
         return;
       }
-      setActive(ref);
+      const enriched = activeLiveSessionRefFromRow(body.session);
+      setActiveLiveSession(enriched);
+      setActive(enriched);
       setSession(body.session);
     } catch {
       setActive(ref);
@@ -147,6 +153,7 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
     enabled: dialogOpen && Boolean(active?.sessionId) && !displayNameLoading,
     onSessionUpdate: (next) => {
       setSession((prev) => (prev ? { ...prev, ...next } : next));
+      syncActiveLiveSessionFromRow(next);
     },
   });
 
@@ -168,10 +175,13 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
       const sessionId = body.sessionId ?? body.session?.id;
       const code = body.code ?? body.session?.code;
       if (!sessionId || !code) throw new Error("Invalid session response");
-      const ref = { sessionId, code };
+      const sess = body.session;
+      const ref = sess
+        ? activeLiveSessionRefFromRow(sess)
+        : { sessionId, code };
       setActiveLiveSession(ref);
       setActive(ref);
-      setSession(body.session ?? null);
+      setSession(sess ?? null);
       setDialogOpen(true);
       toast.success("Live session started");
     } catch (e) {

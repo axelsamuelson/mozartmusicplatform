@@ -1,11 +1,16 @@
-import { NextResponse } from "next/server";
+import { after, NextResponse } from "next/server";
 
 import { fillBuffer } from "@/lib/live/bufferManager";
 import { calculateSlots } from "@/lib/live/slotSystem";
+import { completePlaylistSourceSync } from "@/lib/live/syncPlaylistSource";
 import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { usesJamsAdvance } from "@/lib/live/sessionMode";
-import { fetchPlaylistTrackStats } from "@/lib/spotify/userLibraryPlaylists";
+import {
+  fetchPlaylistTrackStatsForSession,
+  isLargePlaylistForAsyncSync,
+} from "@/lib/spotify/playlistTrackStatsCached";
+import { isPlaylistTracksCacheFresh, loadUserPlaylistTracksMap } from "@/lib/spotify/playlistTracksDb";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -51,11 +56,14 @@ export async function GET(
   }
 
   const mine = (data ?? []).find((r) => r.user_id === user.id) ?? null;
+  const status =
+    (mine as LiveSessionSourceRow | null)?.playlist_sync_status ?? "ready";
 
   return NextResponse.json({
     mine: mine as LiveSessionSourceRow | null,
     sources: (data ?? []) as LiveSessionSourceRow[],
     defaultSlots: calculateSlots(null),
+    status,
   });
 }
 
@@ -106,6 +114,7 @@ export async function POST(
   let playlistName: string | null = null;
   let playlistSize: number | null = null;
   let playlistTrackPool: string[] = [];
+  let playlistSyncStatus: "ready" | "loading" | "error" = "ready";
 
   if (body.source_type === "playlist") {
     const pid = body.spotify_playlist_id?.trim();
@@ -120,29 +129,69 @@ export async function POST(
       return NextResponse.json({ error: "Spotify token required" }, { status: 401 });
     }
 
-    const stats = await fetchPlaylistTrackStats(accessToken, pid);
-    if (stats.total_tracks < MIN_PLAYLIST_TRACKS) {
-      return NextResponse.json(
-        { error: `Playlist must have at least ${MIN_PLAYLIST_TRACKS} tracks` },
-        { status: 400 },
-      );
-    }
+    const cachedMap = await loadUserPlaylistTracksMap(supabase, user.id);
+    const cached = cachedMap.get(pid);
+    const cacheFresh =
+      cached &&
+      isPlaylistTracksCacheFresh(cached.last_synced_at) &&
+      cached.track_ids.length >= MIN_PLAYLIST_TRACKS;
 
-    playlistSize = stats.total_tracks;
-    playlistTrackPool = stats.trackRowIds;
-    playlistName = pid;
-
-    try {
-      const plRes = await fetch(
-        `https://api.spotify.com/v1/playlists/${encodeURIComponent(pid)}?fields=name`,
-        { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
+    if (cacheFresh) {
+      const stats = await fetchPlaylistTrackStatsForSession(
+        accessToken,
+        pid,
+        supabase,
+        user.id,
       );
-      if (plRes.ok) {
-        const pl = (await plRes.json()) as { name?: string };
-        playlistName = pl.name ?? playlistName;
+      if (stats.total_tracks < MIN_PLAYLIST_TRACKS) {
+        return NextResponse.json(
+          { error: `Playlist must have at least ${MIN_PLAYLIST_TRACKS} tracks` },
+          { status: 400 },
+        );
       }
-    } catch {
-      /* keep id as name */
+      playlistSize = stats.total_tracks;
+      playlistTrackPool = stats.trackRowIds;
+      playlistName = cached.name ?? pid;
+    } else {
+      let estimatedTotal = cached?.total_tracks ?? 0;
+      try {
+        const plRes = await fetch(
+          `https://api.spotify.com/v1/playlists/${encodeURIComponent(pid)}?fields=name,tracks.total`,
+          { headers: { Authorization: `Bearer ${accessToken}` }, cache: "no-store" },
+        );
+        if (plRes.ok) {
+          const pl = (await plRes.json()) as {
+            name?: string;
+            tracks?: { total?: number };
+          };
+          playlistName = pl.name ?? pid;
+          estimatedTotal = pl.tracks?.total ?? estimatedTotal;
+        }
+      } catch {
+        playlistName = pid;
+      }
+
+      if (isLargePlaylistForAsyncSync(estimatedTotal)) {
+        playlistSize = estimatedTotal;
+        playlistTrackPool = [];
+        playlistSyncStatus = "loading";
+      } else {
+        const stats = await fetchPlaylistTrackStatsForSession(
+          accessToken,
+          pid,
+          supabase,
+          user.id,
+        );
+        if (stats.total_tracks < MIN_PLAYLIST_TRACKS) {
+          return NextResponse.json(
+            { error: `Playlist must have at least ${MIN_PLAYLIST_TRACKS} tracks` },
+            { status: 400 },
+          );
+        }
+        playlistSize = stats.total_tracks;
+        playlistTrackPool = stats.trackRowIds;
+        playlistSyncStatus = "ready";
+      }
     }
   }
 
@@ -167,6 +216,7 @@ export async function POST(
     playlist_name: playlistName,
     playlist_size: playlistSize,
     playlist_track_pool: playlistTrackPool,
+    playlist_sync_status: playlistSyncStatus,
     slots,
     flagged_as_bad_match: false,
     updated_at: new Date().toISOString(),
@@ -194,7 +244,9 @@ export async function POST(
     { onConflict: "session_id,user_id" },
   );
 
-  if (body.source_type !== "none") {
+  const source = upserted as LiveSessionSourceRow;
+
+  if (body.source_type !== "none" && playlistSyncStatus === "ready") {
     try {
       const admin = createAdminClient();
       await fillBuffer(admin, supabase, sessionId, user.id, body.source_type);
@@ -203,8 +255,40 @@ export async function POST(
     }
   }
 
+  if (
+    body.source_type === "playlist" &&
+    playlistSyncStatus === "loading" &&
+    body.spotify_playlist_id
+  ) {
+    const pid = body.spotify_playlist_id.trim();
+    let bgToken = "";
+    try {
+      bgToken = await requireProviderAccessToken(supabase);
+    } catch {
+      /* token unavailable */
+    }
+    if (bgToken) {
+      after(async () => {
+        try {
+          const admin = createAdminClient();
+          await completePlaylistSourceSync(
+            admin,
+            supabase,
+            sessionId,
+            user.id,
+            pid,
+            bgToken,
+          );
+        } catch {
+          /* background sync failed */
+        }
+      });
+    }
+  }
+
   return NextResponse.json({
-    source: upserted as LiveSessionSourceRow,
+    source,
     slots,
+    status: playlistSyncStatus,
   });
 }

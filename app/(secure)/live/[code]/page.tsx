@@ -1,7 +1,7 @@
 "use client";
 
-import { useParams } from "next/navigation";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { JukeboxAddSong } from "@/components/live/JukeboxAddSong";
@@ -15,6 +15,12 @@ import { LiveRatingForm } from "@/components/LiveRatingForm";
 import { scoreBadgeClass, scoreReadoutClass } from "@/components/ScoreSlider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  clearActiveLiveSession,
+  getActiveLiveSession,
+  setActiveLiveSession,
+} from "@/lib/live/activeSessionStorage";
+import { activeLiveSessionRefFromRow } from "@/lib/live/activeSessionMeta";
 import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
 import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
 import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
@@ -40,6 +46,7 @@ import { glassCard, pageHeading, pageSub } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 
 export default function LiveSessionPage() {
+  const router = useRouter();
   const params = useParams();
   const rawCode = typeof params.code === "string" ? params.code : "";
   const code = normalizeSessionCode(rawCode);
@@ -62,6 +69,8 @@ export default function LiveSessionPage() {
   const [advancing, setAdvancing] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
   const [hasSource, setHasSource] = useState(false);
+  const [bufferRefreshKey, setBufferRefreshKey] = useState(0);
+  const advanceCooldownUntilRef = useRef(0);
 
   const sessionMode = session ? getLiveSessionMode(session) : "legacy";
   const jams = sessionMode === "jams";
@@ -101,9 +110,21 @@ export default function LiveSessionPage() {
     });
   }, []);
 
-  const applySession = useCallback((next: LiveSessionRow) => {
-    setSession((prev) => (prev ? { ...prev, ...next } : next));
-  }, []);
+  const applySession = useCallback(
+    (next: LiveSessionRow) => {
+      setSession((prev) => (prev ? { ...prev, ...next } : next));
+      const active = getActiveLiveSession();
+      if (active?.sessionId === next.id) {
+        setActiveLiveSession(activeLiveSessionRefFromRow(next));
+      }
+      if (next.ended_at || !next.is_active) {
+        clearActiveLiveSession();
+        toast.info("Session ended");
+        router.push("/dashboard");
+      }
+    },
+    [router],
+  );
 
   const loadQueue = useCallback(async (sessionId: string) => {
     const res = await fetch(`/api/live/${sessionId}/queue`);
@@ -178,6 +199,10 @@ export default function LiveSessionPage() {
     ])
       .then(async ([sess, tags]) => {
         setSession(sess);
+        const active = getActiveLiveSession();
+        if (active?.sessionId === sess.id) {
+          setActiveLiveSession(activeLiveSessionRefFromRow(sess));
+        }
         setGenreTags(tags.genre_tags ?? []);
         setMoodTags(tags.mood_tags ?? []);
         await loadRatings(sess.id);
@@ -225,6 +250,7 @@ export default function LiveSessionPage() {
       if (session?.id && sessionHasScores(session)) void loadScores(session.id);
     },
     onSessionUpdate: applySession,
+    onBufferChange: () => setBufferRefreshKey((k) => k + 1),
   });
 
   const onlineCount = Math.max(participants.length, 1);
@@ -268,6 +294,8 @@ export default function LiveSessionPage() {
 
   async function handleNextTrack() {
     if (!session || !canControlPlayback) return;
+    if (Date.now() < advanceCooldownUntilRef.current) return;
+    advanceCooldownUntilRef.current = Date.now() + 3000;
     setAdvancing(true);
     try {
       const endpoint = jams
@@ -276,9 +304,18 @@ export default function LiveSessionPage() {
       const res = await fetch(endpoint, { method: "POST" });
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
+        message?: string;
         session?: LiveSessionRow;
         queue?: LiveQueueRow[];
       };
+      if (res.status === 401 && body.error === "host_token_expired") {
+        toast.error(body.message ?? "Host Spotify session expired — log in again");
+        return;
+      }
+      if (res.status === 409) {
+        toast.error("Advance already in progress");
+        return;
+      }
       if (!res.ok) throw new Error(body.error || "Could not advance queue");
       if (body.session) applySession(body.session);
       if (body.queue) setQueue(body.queue);
@@ -324,7 +361,10 @@ export default function LiveSessionPage() {
   async function handleEndSession() {
     if (!session || !canControlPlayback) return;
     const res = await fetch(`/api/live/${session.id}/end`, { method: "POST" });
-    if (res.ok) window.location.href = `/live/${code}/summary`;
+    if (res.ok) {
+      clearActiveLiveSession();
+      window.location.href = `/live/${code}/summary`;
+    }
   }
 
   function handleRefresh() {
@@ -408,6 +448,7 @@ export default function LiveSessionPage() {
           onEndSession={() => void handleEndSession()}
           onSubmitRating={handleSubmit}
           onRefresh={handleRefresh}
+          bufferRefreshKey={bufferRefreshKey}
         />
       ) : (
       <div className={cn(wideLayout && "grid gap-6 lg:grid-cols-[1fr_280px]")}>

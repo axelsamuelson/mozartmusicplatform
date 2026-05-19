@@ -26,6 +26,9 @@ export type LiveSessionRow = {
   duration_minutes?: number | null;
   host_disconnected_at?: string | null;
   host_provider_token?: string | null;
+  host_provider_refresh_token?: string | null;
+  host_token_expires_at?: string | null;
+  advance_lock_at?: string | null;
   current_track_started_at?: string | null;
   ended_at?: string | null;
   current_queue_id?: string | null;
@@ -63,7 +66,14 @@ export type LiveSessionAggregate = {
 export type ActiveLiveSessionRef = {
   sessionId: string;
   code: string;
+  hostUserId?: string;
+  wamControlsPlayback?: boolean;
+  jamsEnabled?: boolean;
+  jukeboxEnabled?: boolean;
+  isActive?: boolean;
 };
+
+export type PlaylistSyncStatus = "ready" | "loading" | "error";
 
 export type LivePresenceMember = {
   userId: string;
@@ -98,6 +108,7 @@ export type LiveSessionSourceRow = {
   slots: number;
   flagged_as_bad_match: boolean;
   playlist_track_pool?: string[];
+  playlist_sync_status?: PlaylistSyncStatus;
   joined_at: string;
   updated_at: string;
 };

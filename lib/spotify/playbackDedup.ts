@@ -1,6 +1,7 @@
 import type { SpotifyPlaybackApiResponse } from "@/lib/spotify/currentlyPlaying";
 
-const DEDUP_MS = 3_000;
+/** Coalesce rapid GET /api/spotify/playback (Player poll + multiple tabs). */
+const DEDUP_MS = 12_000;
 
 type Entry = {
   at: number;

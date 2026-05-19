@@ -21,7 +21,8 @@ export function sessionProviderTokenIsFresh(
 ): providerToken is string {
   if (!providerToken) return false;
   const expiresAt = spotifyTokenExpiresAt(user);
-  if (expiresAt <= 0) return true;
+  /** Unknown expiry — do not trust Supabase provider_token (often stale → SDK auth errors). */
+  if (expiresAt <= 0) return false;
   return expiresAt > Math.floor(Date.now() / 1000) + TOKEN_EXPIRY_BUFFER_SEC;
 }
 

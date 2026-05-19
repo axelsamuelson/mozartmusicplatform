@@ -1,8 +1,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { getNextFromBuffer } from "@/lib/live/bufferManager";
-import { getHostToken } from "@/lib/live/getHostToken";
-import { playTrackOnHostDevice } from "@/lib/live/hostPlayback";
+import { getHostToken, HostTokenExpiredError } from "@/lib/live/getHostToken";
+import { HostPlaybackError, playTrackOnHostDevice } from "@/lib/live/hostPlayback";
 import { finalizeTrackScores } from "@/lib/live/jukeboxScores";
 import { sessionPatchFromQueueItem } from "@/lib/live/jukeboxQueue";
 import { runPostPlayChecks } from "@/lib/live/jamsPostPlay";
@@ -219,8 +219,16 @@ export async function advanceJamsSession(
   }
 
   if (session.wam_controls_playback) {
-    const hostToken = await getHostToken(admin, session, callerUserId);
-    await playTrackOnHostDevice(hostToken, nextItem.spotify_track_id);
+    try {
+      const hostToken = await getHostToken(admin, session, callerUserId);
+      await playTrackOnHostDevice(hostToken, nextItem.spotify_track_id);
+    } catch (e) {
+      if (e instanceof HostTokenExpiredError) throw e;
+      if (e instanceof HostPlaybackError && e.status === 401) {
+        throw new HostTokenExpiredError();
+      }
+      throw e;
+    }
   }
 
   return {

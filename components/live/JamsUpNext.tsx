@@ -13,11 +13,14 @@ export function JamsUpNext({
   session,
   userId,
   hideNames,
+  refreshKey = 0,
   className,
 }: {
   session: LiveSessionRow;
   userId: string | null;
   hideNames?: boolean;
+  /** Increment to refetch (e.g. on live_queue_buffer realtime). */
+  refreshKey?: number;
   className?: string;
 }) {
   const [items, setItems] = useState<UpNextItem[]>([]);
@@ -35,10 +38,9 @@ export function JamsUpNext({
   }, [session.id]);
 
   useEffect(() => {
+    setLoading(true);
     void load();
-    const id = window.setInterval(() => void load(), 8000);
-    return () => window.clearInterval(id);
-  }, [load]);
+  }, [load, refreshKey]);
 
   if (surprise) {
     return (
@@ -70,14 +72,32 @@ export function JamsUpNext({
             >
               <div className="relative size-8 shrink-0 overflow-hidden rounded-md bg-white/10">
                 {item.image_url ? (
-                  <Image src={item.image_url} alt="" width={32} height={32} className="size-8 object-cover" unoptimized />
+                  <Image
+                    src={item.image_url}
+                    alt=""
+                    width={32}
+                    height={32}
+                    className="size-8 object-cover"
+                    unoptimized
+                  />
                 ) : (
                   <Music2 className="m-2 size-4 text-white/30" />
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm text-white">{item.track_name}</p>
-                <p className="truncate text-xs text-white/45">{item.artist_name ?? "Unknown"}</p>
+                {item.track_name ? (
+                  <>
+                    <p className="truncate text-sm text-white">{item.track_name}</p>
+                    <p className="truncate text-xs text-white/45">
+                      {item.artist_name ?? "Unknown"}
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <div className="h-4 w-3/4 max-w-[12rem] animate-pulse rounded bg-white/10" />
+                    <div className="mt-1 h-3 w-24 animate-pulse rounded bg-white/10" />
+                  </>
+                )}
               </div>
               {!hideNames ? (
                 <span className="shrink-0 text-[10px] text-white/35">

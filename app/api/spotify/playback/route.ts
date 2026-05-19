@@ -169,30 +169,6 @@ export async function GET() {
     return NextResponse.json({ error: msg || "Auth failed" }, { status: 401 });
   }
 
-  if (IS_DEV) {
-    const testRes = await fetch("https://api.spotify.com/v1/me", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    const testUser = (await testRes.json()) as { id?: string; email?: string };
-    console.log(
-      "[playback] token belongs to spotify user:",
-      testUser.id,
-      testUser.email,
-    );
-
-    const playbackRes = await fetch("https://api.spotify.com/v1/me/player", {
-      headers: { Authorization: `Bearer ${accessToken}` },
-    });
-    console.log("[playback] /me/player status:", playbackRes.status);
-    if (playbackRes.status === 200) {
-      const raw = await playbackRes.json();
-      console.log(
-        "[playback] raw response:",
-        JSON.stringify(raw).slice(0, 500),
-      );
-    }
-  }
-
   try {
     const playback = await fetchCurrentPlayback(accessToken);
     recordSpotifySuccess();

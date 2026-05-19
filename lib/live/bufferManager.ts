@@ -1,8 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { fetchSpotifyItem } from "@/lib/spotify/api";
-import { fetchPlaylistTrackStats } from "@/lib/spotify/userLibraryPlaylists";
-import { getValidProviderAccessToken } from "@/lib/spotify/userOAuthToken";
 import type {
   LiveQueueBufferRow,
   LiveSessionSourceRow,
@@ -11,6 +8,7 @@ import type {
 
 const BUFFER_TARGET = 3;
 const HIGH_RATING_BOOST = 1.3;
+const PLACEHOLDER_TRACK_NAME = "…";
 
 export type BufferedTrack = {
   id: string;
@@ -25,9 +23,6 @@ export type BufferedTrack = {
 
 type TrackCandidate = {
   spotify_track_id: string;
-  track_name: string;
-  artist_name: string | null;
-  image_url: string | null;
   weight: number;
 };
 
@@ -102,35 +97,16 @@ function pickWeighted(candidates: TrackCandidate[]): TrackCandidate | null {
   return candidates[candidates.length - 1] ?? null;
 }
 
-async function candidatesFromPlaylist(
-  accessToken: string,
-  playlistId: string,
+function candidatesFromPool(
+  pool: string[],
   excluded: Set<string>,
   highRated: Set<string>,
-): Promise<TrackCandidate[]> {
-  const { trackRowIds } = await fetchPlaylistTrackStats(accessToken, playlistId);
-  const pool = trackRowIds.filter((id) => !excluded.has(id));
-  if (pool.length === 0) return [];
-
-  const shuffled = [...pool].sort(() => Math.random() - 0.5).slice(0, 40);
-  const out: TrackCandidate[] = [];
-
-  for (const id of shuffled) {
-    try {
-      const item = await fetchSpotifyItem(id, "track");
-      const weight = highRated.has(id) ? HIGH_RATING_BOOST : 1;
-      out.push({
-        spotify_track_id: item.spotify_id,
-        track_name: item.name,
-        artist_name: item.artist_name,
-        image_url: item.image_url,
-        weight,
-      });
-    } catch {
-      /* skip bad ids */
-    }
-  }
-  return out;
+): TrackCandidate[] {
+  const shuffled = pool.filter((id) => !excluded.has(id)).sort(() => Math.random() - 0.5);
+  return shuffled.slice(0, 40).map((id) => ({
+    spotify_track_id: id,
+    weight: highRated.has(id) ? HIGH_RATING_BOOST : 1,
+  }));
 }
 
 async function candidatesFromTopRated(
@@ -140,7 +116,7 @@ async function candidatesFromTopRated(
 ): Promise<TrackCandidate[]> {
   const { data } = await supabase
     .from("ratings")
-    .select("spotify_id, score, cached_items(name, artist_name, image_url)")
+    .select("spotify_id, score")
     .eq("user_id", userId)
     .order("score", { ascending: false })
     .limit(50);
@@ -150,18 +126,10 @@ async function candidatesFromTopRated(
 
   const shuffled = [...pool].sort(() => Math.random() - 0.5);
   return shuffled.map((r) => {
-    const ci = r.cached_items as {
-      name?: string;
-      artist_name?: string | null;
-      image_url?: string | null;
-    } | null;
     const score = r.score as number;
     const id = r.spotify_id as string;
     return {
       spotify_track_id: id,
-      track_name: ci?.name ?? "Unknown track",
-      artist_name: ci?.artist_name ?? null,
-      image_url: ci?.image_url ?? null,
       weight: score >= 70 ? HIGH_RATING_BOOST : 1,
     };
   });
@@ -181,7 +149,7 @@ async function loadSource(
   return data ? (data as LiveSessionSourceRow) : null;
 }
 
-/** Keep 3 tracks in live_queue_buffer for a participant. */
+/** Keep 3 tracks in live_queue_buffer for a participant (IDs only; metadata enriched lazily). */
 export async function fillBuffer(
   admin: SupabaseClient,
   userSupabase: SupabaseClient,
@@ -192,6 +160,7 @@ export async function fillBuffer(
   const source = await loadSource(admin, sessionId, userId);
   const sourceType = sourceOverride ?? source?.source_type ?? "none";
   if (sourceType === "none") return;
+  if (sourceType === "playlist" && source?.playlist_sync_status === "loading") return;
 
   const { count } = await admin
     .from("live_queue_buffer")
@@ -209,34 +178,7 @@ export async function fillBuffer(
     const pool = (source?.playlist_track_pool ?? []) as string[];
     if (pool.length > 0) {
       const highRated = await loadHighRatedIds(userSupabase, userId, pool);
-      const shuffled = pool.filter((id) => !excluded.has(id)).sort(() => Math.random() - 0.5);
-      for (const id of shuffled.slice(0, 30)) {
-        try {
-          const item = await fetchSpotifyItem(id, "track");
-          candidates.push({
-            spotify_track_id: item.spotify_id,
-            track_name: item.name,
-            artist_name: item.artist_name,
-            image_url: item.image_url,
-            weight: highRated.has(id) ? HIGH_RATING_BOOST : 1,
-          });
-        } catch {
-          /* skip */
-        }
-      }
-    } else if (source?.spotify_playlist_id) {
-      try {
-        const accessToken = await getValidProviderAccessToken(userSupabase);
-        const highRated = await loadHighRatedIds(userSupabase, userId, []);
-        candidates = await candidatesFromPlaylist(
-          accessToken,
-          source.spotify_playlist_id,
-          excluded,
-          highRated,
-        );
-      } catch {
-        /* no token — pool fills on source POST */
-      }
+      candidates = candidatesFromPool(pool, excluded, highRated);
     }
   } else if (sourceType === "top_rated") {
     candidates = await candidatesFromTopRated(userSupabase, userId, excluded);
@@ -273,9 +215,9 @@ export async function fillBuffer(
       user_id: userId,
       position,
       spotify_track_id: choice.spotify_track_id,
-      track_name: choice.track_name,
-      artist_name: choice.artist_name,
-      image_url: choice.image_url,
+      track_name: PLACEHOLDER_TRACK_NAME,
+      artist_name: null,
+      image_url: null,
     });
     used.add(position);
     position++;

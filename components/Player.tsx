@@ -15,6 +15,11 @@ import {
 
 import { Slider } from "@/components/ui/slider";
 import { LiveSessionButton } from "@/components/LiveSessionButton";
+import {
+  clearActiveLiveSession,
+  getActiveLiveSession,
+} from "@/lib/live/activeSessionStorage";
+import { shouldHostSkipPlaybackApiPoll } from "@/lib/live/activeSessionMeta";
 import { useLiveSessionHostSync } from "@/lib/live/useLiveSessionHostSync";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
@@ -114,13 +119,15 @@ function playerLog(...args: unknown[]): void {
 }
 
 function apiPlaybackPollMs(playback: SpotifyPlaybackApiResponse): number {
-  if (!isApiPlaybackWithTrack(playback)) return 60_000;
-  if (playback.isPlaying) return 15_000;
-  return 30_000;
+  if (!isApiPlaybackWithTrack(playback)) return 90_000;
+  if (playback.isPlaying) return 20_000;
+  return 45_000;
 }
 
 export function Player() {
   const [hasUser, setHasUser] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
+  const [skipApiPoll, setSkipApiPoll] = useState(false);
   const [hasToken, setHasToken] = useState(false);
   const [playbackReady, setPlaybackReady] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -176,17 +183,51 @@ export function Player() {
     await Promise.all([refreshSdkState(), fetchApiPlayback()]);
   }, [fetchApiPlayback, refreshSdkState]);
 
-  useLiveSessionHostSync(hasUser && hasToken);
+  const refreshSkipApiPoll = useCallback(() => {
+    const active = getActiveLiveSession();
+    if (active?.isActive === false) {
+      clearActiveLiveSession();
+      setSkipApiPoll(false);
+      return;
+    }
+    setSkipApiPoll(shouldHostSkipPlaybackApiPoll(active, currentUserId));
+  }, [currentUserId]);
+
+  useEffect(() => {
+    refreshSkipApiPoll();
+    const onSessionChange = () => refreshSkipApiPoll();
+    window.addEventListener("wam-live-session-changed", onSessionChange);
+    return () => window.removeEventListener("wam-live-session-changed", onSessionChange);
+  }, [refreshSkipApiPoll]);
+
+  useLiveSessionHostSync(hasUser && hasToken && !skipApiPoll);
 
   useEffect(() => {
     const supabase = createClient();
 
-    registerPlaybackTokenProvider(async () => {
+    async function fetchPlaybackToken(): Promise<string | null> {
       const res = await fetch("/api/spotify/token", { cache: "no-store" });
-      if (!res.ok) return null;
-      const body = (await res.json()) as { access_token?: string };
-      return typeof body.access_token === "string" ? body.access_token : null;
-    });
+      if (res.ok) {
+        const body = (await res.json()) as { access_token?: string };
+        return typeof body.access_token === "string" ? body.access_token : null;
+      }
+      if (res.status === 429 || res.status === 503) {
+        return null;
+      }
+      if (res.status === 401) {
+        const { error } = await supabase.auth.refreshSession();
+        if (!error) {
+          const retry = await fetch("/api/spotify/token", { cache: "no-store" });
+          if (retry.ok) {
+            const body = (await retry.json()) as { access_token?: string };
+            return typeof body.access_token === "string" ? body.access_token : null;
+          }
+        }
+      }
+      return null;
+    }
+
+    registerPlaybackTokenProvider(fetchPlaybackToken);
 
     async function checkSpotifyToken(): Promise<boolean> {
       const res = await fetch("/api/spotify/token", { cache: "no-store" });
@@ -212,7 +253,9 @@ export function Player() {
       }
 
       setHasUser(Boolean(user));
+      setCurrentUserId(user?.id ?? null);
       setHasToken(tokenOk);
+      refreshSkipApiPoll();
 
       if (!user || !tokenOk) {
         disconnectPlayback();
@@ -259,7 +302,7 @@ export function Player() {
       unregisterPlaybackTokenProvider();
       disconnectPlayback();
     };
-  }, [fetchApiPlayback, refreshAll]);
+  }, [fetchApiPlayback, refreshAll, refreshSkipApiPoll]);
 
   const sdkPlaying = Boolean(
     playbackReady &&
@@ -271,11 +314,13 @@ export function Player() {
   const pollIntervalRef = useRef(0);
 
   useEffect(() => {
-    if (!hasToken || PLAYBACK_POLLING_DISABLED || sdkPlaying) {
+    if (!hasToken || PLAYBACK_POLLING_DISABLED || sdkPlaying || skipApiPoll) {
       playerLog("Polling inactive:", {
         hasToken,
         pollingDisabled: PLAYBACK_POLLING_DISABLED,
         sdkPlaying,
+        skipApiPoll,
+        wamControlsPlayback: getActiveLiveSession()?.wamControlsPlayback,
       });
       return;
     }
@@ -304,7 +349,7 @@ export function Player() {
       cancelled = true;
       window.clearTimeout(timeoutId);
     };
-  }, [hasToken, fetchApiPlayback, sdkPlaying]);
+  }, [hasToken, fetchApiPlayback, sdkPlaying, skipApiPoll]);
 
   useEffect(() => {
     if (!playbackReady) return;

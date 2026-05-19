@@ -1,5 +1,9 @@
 import { NextResponse } from "next/server";
 
+import {
+  isSpotify429Error,
+  SPOTIFY_CIRCUIT_UNAVAILABLE_MSG,
+} from "@/lib/spotify/rateLimiter";
 import { getValidProviderAccessToken } from "@/lib/spotify/userOAuthToken";
 import { createClient } from "@/lib/supabase/server";
 
@@ -24,6 +28,18 @@ export async function GET() {
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Token error";
+    if (isSpotify429Error(e) || msg.includes("rate limit")) {
+      return NextResponse.json(
+        {
+          error:
+            "Spotify rate limited. Wait 15–60 minutes before signing in or playing again.",
+        },
+        { status: 429 },
+      );
+    }
+    if (msg === SPOTIFY_CIRCUIT_UNAVAILABLE_MSG) {
+      return NextResponse.json({ error: msg }, { status: 503 });
+    }
     if (msg === "MISSING_SPOTIFY_TOKEN" || msg === "MISSING_SPOTIFY_REFRESH") {
       return NextResponse.json(
         {

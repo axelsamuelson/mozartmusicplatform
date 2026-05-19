@@ -9,7 +9,7 @@ const accessByUser = new Map<string, CachedAccess>();
 const refreshInflight = new Map<string, Promise<string>>();
 const lastPersistMsByUser = new Map<string, number>();
 
-const TOKEN_EXPIRY_BUFFER_SEC = 120;
+export const TOKEN_EXPIRY_BUFFER_SEC = 120;
 /** Min interval between supabase.auth.updateUser for Spotify metadata. */
 export const SPOTIFY_METADATA_PERSIST_MIN_MS = 60_000;
 
@@ -21,6 +21,13 @@ export function getCachedSpotifyAccess(userId: string): string | null {
     return null;
   }
   return hit.accessToken;
+}
+
+/** Seconds until cached access token expires (null if none). */
+export function getCachedSpotifyAccessTtlSec(userId: string): number | null {
+  const hit = accessByUser.get(userId);
+  if (!hit) return null;
+  return hit.expiresAtSec - Math.floor(Date.now() / 1000);
 }
 
 export function setCachedSpotifyAccess(
@@ -59,4 +66,9 @@ export function shouldPersistSpotifyMetadata(userId: string): boolean {
 
 export function markSpotifyMetadataPersisted(userId: string): void {
   lastPersistMsByUser.set(userId, Date.now());
+}
+
+export function clearSpotifyTokenCache(userId: string): void {
+  accessByUser.delete(userId);
+  refreshInflight.delete(userId);
 }

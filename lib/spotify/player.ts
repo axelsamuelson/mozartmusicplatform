@@ -265,8 +265,8 @@ function friendlySdkError(
   }
   if (kind === "authentication") {
     return message?.trim()
-      ? `Spotify authentication failed: ${message}`
-      : "Spotify session expired. Sign out and sign in with Spotify again.";
+      ? `Spotify authentication failed: ${message}. Sign out and sign in with Spotify again (Premium required for in-browser playback).`
+      : "Spotify session expired or missing streaming permission. Sign out and sign in with Spotify again (Premium required).";
   }
   return message?.trim()
     ? `Spotify player failed to start: ${message}`
