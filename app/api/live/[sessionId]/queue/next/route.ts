@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 
+import {
+  AdvanceInProgressError,
+  releaseAdvanceLock,
+  requireAdvanceLock,
+} from "@/lib/live/advanceLock";
 import { finalizeTrackScores } from "@/lib/live/jukeboxScores";
 import {
   loadPendingQueue,
@@ -57,6 +62,18 @@ export async function POST(
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Server configuration error";
     return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  try {
+    await requireAdvanceLock(admin, sessionId);
+  } catch (e) {
+    if (e instanceof AdvanceInProgressError) {
+      return NextResponse.json(
+        { error: "Advance already in progress" },
+        { status: 409 },
+      );
+    }
+    throw e;
   }
 
   try {
@@ -124,5 +141,7 @@ export async function POST(
       );
     }
     return NextResponse.json({ error: msg }, { status: 500 });
+  } finally {
+    await releaseAdvanceLock(admin, sessionId).catch(() => undefined);
   }
 }

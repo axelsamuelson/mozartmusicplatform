@@ -13,6 +13,9 @@ import {
   usesJukeboxQueueOrdering,
   usesRoundRobinQueueOrdering,
 } from "@/lib/live/sessionMode";
+import { getHostToken } from "@/lib/live/getHostToken";
+import { fetchTrackMetadataBatch } from "@/lib/spotify/batchTrackMetadata";
+import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import type { LiveQueueRow, LiveScoreRow, LiveSessionRow } from "@/lib/types/live";
 
 export async function loadPendingQueue(
@@ -84,7 +87,10 @@ export async function recomputeQueuePositions(
   );
 }
 
-export function sessionPatchFromQueueItem(item: LiveQueueRow): Partial<LiveSessionRow> {
+export function sessionPatchFromQueueItem(
+  item: LiveQueueRow,
+  durationMs = 0,
+): Partial<LiveSessionRow> {
   return {
     spotify_track_id: item.spotify_track_id,
     track_name: item.track_name,
@@ -94,8 +100,24 @@ export function sessionPatchFromQueueItem(item: LiveQueueRow): Partial<LiveSessi
     current_track_user_id: item.user_id,
     is_playing: true,
     progress_ms: 0,
+    duration_ms: durationMs > 0 ? durationMs : 0,
     playback_updated_at: new Date().toISOString(),
   };
+}
+
+async function resolveQueueTrackDurationMs(
+  admin: SupabaseClient,
+  session: LiveSessionRow,
+  trackId: string,
+): Promise<number> {
+  if (isSpotifyCircuitOpen()) return 0;
+  try {
+    const token = await getHostToken(admin, session);
+    const meta = await fetchTrackMetadataBatch(token, [trackId]);
+    return meta.get(trackId)?.duration_ms ?? 0;
+  } catch {
+    return 0;
+  }
 }
 
 export async function pickAndApplyNextTrack(
@@ -148,9 +170,15 @@ export async function pickAndApplyNextTrack(
     };
   }
 
+  const durationMs = await resolveQueueTrackDurationMs(
+    admin,
+    session,
+    next.spotify_track_id,
+  );
+
   const { data: updatedSession, error: sessionErr } = await admin
     .from("live_sessions")
-    .update(sessionPatchFromQueueItem(next))
+    .update(sessionPatchFromQueueItem(next, durationMs))
     .eq("id", sessionId)
     .select("*")
     .single();

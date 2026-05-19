@@ -25,6 +25,7 @@ import {
   shouldEnableLiveSessionHostSync,
   shouldHostSkipPlaybackApiPoll,
 } from "@/lib/live/activeSessionMeta";
+import { useLiveQueueAutoAdvance } from "@/lib/live/useLiveQueueAutoAdvance";
 import { useLiveSessionHostSync } from "@/lib/live/useLiveSessionHostSync";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
@@ -129,6 +130,8 @@ export function Player() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [skipApiPoll, setSkipApiPoll] = useState(false);
   const [hostSyncEnabled, setHostSyncEnabled] = useState(false);
+  const [queueAutoAdvanceEnabled, setQueueAutoAdvanceEnabled] = useState(false);
+  const queueAdvancingRef = useRef(false);
   const [hasToken, setHasToken] = useState(false);
   const [playbackReady, setPlaybackReady] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
@@ -163,7 +166,47 @@ export function Player() {
     }
     setSkipApiPoll(shouldHostSkipPlaybackApiPoll(active, currentUserId));
     setHostSyncEnabled(shouldEnableLiveSessionHostSync(active, currentUserId));
+    setQueueAutoAdvanceEnabled(
+      Boolean(
+        active &&
+          currentUserId &&
+          active.hostUserId === currentUserId &&
+          active.jukeboxEnabled &&
+          !active.jamsEnabled,
+      ),
+    );
   }, [currentUserId]);
+
+  const advanceQueueFromPlayer = useCallback(async () => {
+    const active = getActiveLiveSession();
+    if (!active?.sessionId || active.jamsEnabled) return;
+    if (queueAdvancingRef.current) return;
+    queueAdvancingRef.current = true;
+    try {
+      const res = await fetch(`/api/live/${active.sessionId}/queue/next`, {
+        method: "POST",
+        cache: "no-store",
+      });
+      if (res.ok) {
+        void refreshAfterTransport();
+      }
+    } finally {
+      queueAdvancingRef.current = false;
+    }
+  }, [refreshAfterTransport]);
+
+  const onLiveSessionPage =
+    typeof window !== "undefined" && /^\/live\/[^/]+/.test(window.location.pathname);
+
+  useLiveQueueAutoAdvance({
+    enabled:
+      hasUser &&
+      hasToken &&
+      queueAutoAdvanceEnabled &&
+      !onLiveSessionPage,
+    playback,
+    onAdvance: advanceQueueFromPlayer,
+  });
 
   useEffect(() => {
     void ensureActiveLiveSessionMetadata().then(() => refreshLiveSessionPolling());

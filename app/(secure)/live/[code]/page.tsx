@@ -32,6 +32,7 @@ import {
   sessionHasQueue,
   sessionHasScores,
 } from "@/lib/live/sessionMode";
+import { useLiveQueueAutoAdvance } from "@/lib/live/useLiveQueueAutoAdvance";
 import { useLiveSessionChannel } from "@/lib/live/useLiveSessionChannel";
 import { useLiveSessionDisplayName } from "@/lib/live/useLiveSessionDisplayName";
 import { liveAvatarUrl, liveInitials } from "@/lib/live/userDisplay";
@@ -341,42 +342,66 @@ export default function LiveSessionPage() {
     }
   }
 
-  async function handleNextTrack() {
-    if (!session || !canControlPlayback) return;
-    if (Date.now() < advanceCooldownUntilRef.current) return;
-    advanceCooldownUntilRef.current = Date.now() + 3000;
-    setAdvancing(true);
-    try {
-      const endpoint = jams
-        ? `/api/live/${session.id}/advance`
-        : `/api/live/${session.id}/queue/next`;
-      const res = await fetch(endpoint, { method: "POST" });
-      const body = (await res.json().catch(() => ({}))) as {
-        error?: string;
-        message?: string;
-        session?: LiveSessionRow;
-        queue?: LiveQueueRow[];
-      };
-      if (res.status === 401 && body.error === "host_token_expired") {
-        toast.error(body.message ?? "Host Spotify session expired — log in again");
-        return;
+  const handleNextTrack = useCallback(
+    async (options?: { silent?: boolean }) => {
+      if (!session || !canControlPlayback) return;
+      if (Date.now() < advanceCooldownUntilRef.current) return;
+      advanceCooldownUntilRef.current = Date.now() + 3000;
+      setAdvancing(true);
+      try {
+        const endpoint = jams
+          ? `/api/live/${session.id}/advance`
+          : `/api/live/${session.id}/queue/next`;
+        const res = await fetch(endpoint, { method: "POST" });
+        const body = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          message?: string;
+          session?: LiveSessionRow;
+          queue?: LiveQueueRow[];
+        };
+        if (res.status === 401 && body.error === "host_token_expired") {
+          if (!options?.silent) {
+            toast.error(body.message ?? "Host Spotify session expired — log in again");
+          }
+          return;
+        }
+        if (res.status === 409) {
+          return;
+        }
+        if (!res.ok) throw new Error(body.error || "Could not advance queue");
+        if (body.session) applySession(body.session);
+        await loadQueue(session.id);
+        await loadScores(session.id);
+        await loadRatings(session.id);
+        if (!options?.silent) {
+          toast.success(body.session?.spotify_track_id ? "Next track" : "Queue finished");
+        }
+      } catch (e) {
+        if (!options?.silent) {
+          toast.error(e instanceof Error ? e.message : "Could not advance queue");
+        }
+      } finally {
+        setAdvancing(false);
       }
-      if (res.status === 409) {
-        toast.error("Advance already in progress");
-        return;
-      }
-      if (!res.ok) throw new Error(body.error || "Could not advance queue");
-      if (body.session) applySession(body.session);
-      await loadQueue(session.id);
-      await loadScores(session.id);
-      await loadRatings(session.id);
-      toast.success(body.session?.spotify_track_id ? "Next track" : "Queue finished");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not advance queue");
-    } finally {
-      setAdvancing(false);
-    }
-  }
+    },
+    [
+      applySession,
+      canControlPlayback,
+      jams,
+      loadQueue,
+      loadRatings,
+      loadScores,
+      session,
+    ],
+  );
+
+  useLiveQueueAutoAdvance({
+    enabled: Boolean(canControlPlayback && showSongQueue && !jams && session),
+    session,
+    pendingQueueCount: queue.length,
+    advancing,
+    onAdvance: () => handleNextTrack({ silent: true }),
+  });
 
   async function handleRemoveFromQueue(queueId: string) {
     if (!session) return;

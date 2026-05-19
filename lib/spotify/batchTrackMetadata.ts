@@ -10,6 +10,7 @@ export type TrackMetadata = {
   track_name: string;
   artist_name: string | null;
   image_url: string | null;
+  duration_ms: number | null;
 };
 
 const BATCH_SIZE = 50;
@@ -17,6 +18,7 @@ const BATCH_SIZE = 50;
 type SpotifyTrackJson = {
   id: string;
   name: string;
+  duration_ms?: number;
   artists?: { name: string }[];
   album?: { images?: { url: string }[] };
 };
@@ -60,6 +62,10 @@ export async function fetchTrackMetadataBatch(
         track_name: tr.name,
         artist_name: tr.artists?.map((a) => a.name).join(", ") ?? null,
         image_url: tr.album?.images?.[0]?.url ?? null,
+        duration_ms:
+          typeof tr.duration_ms === "number" && tr.duration_ms > 0
+            ? tr.duration_ms
+            : null,
       });
     }
   }
