@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { normalizeJukeboxRankingMode } from "@/lib/live/jukeboxRanking";
+import { getLiveSessionMode } from "@/lib/live/sessionMode";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { LiveQueueRow, LiveScoreRow, LiveSessionRow } from "@/lib/types/live";
 
@@ -165,7 +166,11 @@ export async function maybeAutoFinalizeTrackScores(
   supabase: SupabaseClient,
   session: LiveSessionRow,
 ): Promise<FinalizeTrackScoresResult | null> {
-  if (!session.jukebox_enabled || !session.current_queue_id || !session.current_track_user_id) {
+  if (
+    getLiveSessionMode(session) !== "jukebox" ||
+    !session.current_queue_id ||
+    !session.current_track_user_id
+  ) {
     return null;
   }
 

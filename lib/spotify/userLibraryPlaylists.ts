@@ -82,9 +82,23 @@ export type SpotifyMyPlaylistSummary = {
   name: string;
   image_url: string | null;
   owner_label: string;
-  /** From `tracks.total` on GET /v1/me/playlists (may differ slightly from paginated item count). */
+  /** From `items.total` (or legacy `tracks.total`) on GET /v1/me/playlists. */
   total_tracks: number;
 };
+
+function playlistItemCount(
+  pl: { items?: { total?: number }; tracks?: { total?: number } },
+): number {
+  const fromItems = pl.items?.total;
+  if (typeof fromItems === "number" && Number.isFinite(fromItems)) {
+    return Math.max(0, fromItems);
+  }
+  const fromTracks = pl.tracks?.total;
+  if (typeof fromTracks === "number" && Number.isFinite(fromTracks)) {
+    return Math.max(0, fromTracks);
+  }
+  return 0;
+}
 
 type MePlaylistsPage = {
   items: Array<{
@@ -92,6 +106,7 @@ type MePlaylistsPage = {
     name: string;
     images: { url: string }[];
     owner: { display_name: string | null; id: string };
+    items?: { total?: number };
     tracks?: { total?: number };
   }>;
   next: string | null;
@@ -122,10 +137,7 @@ export async function fetchOwnedMyPlaylistSummaries(
       if (ownerId !== me.id) continue;
 
       const images = Array.isArray(it.images) ? it.images : [];
-      const totalTracks =
-        typeof it.tracks?.total === "number" && Number.isFinite(it.tracks.total)
-          ? Math.max(0, it.tracks.total)
-          : 0;
+      const totalTracks = playlistItemCount(it);
       out.push({
         id: it.id,
         name: typeof it.name === "string" ? it.name : "Untitled playlist",

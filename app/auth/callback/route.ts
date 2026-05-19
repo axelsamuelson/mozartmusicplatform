@@ -1,10 +1,12 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+import { getRequestAppOrigin } from "@/lib/auth/appUrl";
 import { persistSpotifyTokenMetadata } from "@/lib/spotify/spotifyTokenMetadata";
 
 export async function GET(request: NextRequest) {
-  const { searchParams, origin } = new URL(request.url);
+  const { searchParams } = new URL(request.url);
+  const origin = getRequestAppOrigin(request);
   const code = searchParams.get("code");
   const rawNext = searchParams.get("next") ?? "/dashboard";
   const next =

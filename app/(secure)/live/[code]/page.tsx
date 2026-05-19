@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { JukeboxAddSong } from "@/components/live/JukeboxAddSong";
 import { JukeboxQueue } from "@/components/live/JukeboxQueue";
 import { JukeboxScoreboard } from "@/components/live/JukeboxScoreboard";
+import { LiveJamsRoom } from "@/components/live/LiveJamsRoom";
+import { SessionTimer } from "@/components/live/SessionTimer";
 import { LiveNowPlaying } from "@/components/LiveNowPlaying";
 import { LiveParticipants } from "@/components/LiveParticipants";
 import { LiveRatingForm } from "@/components/LiveRatingForm";
@@ -16,6 +18,11 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
 import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
 import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
+import {
+  getLiveSessionMode,
+  sessionHasQueue,
+  sessionHasScores,
+} from "@/lib/live/sessionMode";
 import { useLiveSessionChannel } from "@/lib/live/useLiveSessionChannel";
 import { useLiveSessionDisplayName } from "@/lib/live/useLiveSessionDisplayName";
 import { liveAvatarUrl, liveInitials } from "@/lib/live/userDisplay";
@@ -54,9 +61,15 @@ export default function LiveSessionPage() {
   const [submitting, setSubmitting] = useState(false);
   const [advancing, setAdvancing] = useState(false);
   const [removingId, setRemovingId] = useState<string | null>(null);
+  const [hasSource, setHasSource] = useState(false);
 
-  const jukebox = Boolean(session?.jukebox_enabled);
+  const sessionMode = session ? getLiveSessionMode(session) : "legacy";
+  const jams = sessionMode === "jams";
+  const jukebox = sessionMode === "jukebox";
+  const hasQueue = session ? sessionHasQueue(session) : false;
   const isHost = Boolean(session && userId && session.host_user_id === userId);
+  const isCoHost = Boolean(session && userId && session.co_host_user_id === userId);
+  const canControlPlayback = isHost || isCoHost;
   const isTrackOwner = Boolean(
     jukebox && userId && session?.current_track_user_id === userId,
   );
@@ -168,8 +181,13 @@ export default function LiveSessionPage() {
         setGenreTags(tags.genre_tags ?? []);
         setMoodTags(tags.mood_tags ?? []);
         await loadRatings(sess.id);
-        if (sess.jukebox_enabled) {
+        if (sessionHasQueue(sess)) {
           await Promise.all([loadQueue(sess.id), loadScores(sess.id)]);
+        }
+        if (getLiveSessionMode(sess) === "jams") {
+          const srcRes = await fetch(`/api/live/${sess.id}/source`);
+          const srcBody = (await srcRes.json()) as { mine?: { source_type?: string } | null };
+          setHasSource(Boolean(srcBody.mine && srcBody.mine.source_type !== "none"));
         }
       })
       .catch((e: unknown) => {
@@ -201,10 +219,10 @@ export default function LiveSessionPage() {
       if (session?.id) void loadRatings(session.id);
     },
     onQueueChange: () => {
-      if (session?.id && jukebox) void loadQueue(session.id);
+      if (session?.id && hasQueue) void loadQueue(session.id);
     },
     onScoresChange: () => {
-      if (session?.id && jukebox) void loadScores(session.id);
+      if (session?.id && sessionHasScores(session)) void loadScores(session.id);
     },
     onSessionUpdate: applySession,
   });
@@ -249,10 +267,13 @@ export default function LiveSessionPage() {
   }
 
   async function handleNextTrack() {
-    if (!session || !isHost) return;
+    if (!session || !canControlPlayback) return;
     setAdvancing(true);
     try {
-      const res = await fetch(`/api/live/${session.id}/queue/next`, { method: "POST" });
+      const endpoint = jams
+        ? `/api/live/${session.id}/advance`
+        : `/api/live/${session.id}/queue/next`;
+      const res = await fetch(endpoint, { method: "POST" });
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
         session?: LiveSessionRow;
@@ -295,7 +316,27 @@ export default function LiveSessionPage() {
     }
   }
 
-  const mainClass = jukebox ? "mx-auto max-w-4xl px-4 pb-32 pt-24 md:pt-28" : "mx-auto max-w-lg px-4 pb-32 pt-24 md:pt-28";
+  const wideLayout = jukebox || jams;
+  const mainClass = wideLayout
+    ? "mx-auto max-w-5xl px-4 pb-32 pt-24 md:pt-28"
+    : "mx-auto max-w-lg px-4 pb-32 pt-24 md:pt-28";
+
+  async function handleEndSession() {
+    if (!session || !canControlPlayback) return;
+    const res = await fetch(`/api/live/${session.id}/end`, { method: "POST" });
+    if (res.ok) window.location.href = `/live/${code}/summary`;
+  }
+
+  function handleRefresh() {
+    if (!session) return;
+    void loadRatings(session.id);
+    if (hasQueue) {
+      void loadQueue(session.id);
+    }
+    if (sessionHasScores(session)) {
+      void loadScores(session.id);
+    }
+  }
 
   if (loading) {
     return (
@@ -317,9 +358,9 @@ export default function LiveSessionPage() {
 
   return (
     <main className={mainClass}>
-      <header className="mb-6 text-center">
+      <header className="sticky top-16 z-30 mb-6 rounded-xl border border-white/10 bg-black/70 py-4 text-center backdrop-blur">
         <p className="text-xs uppercase tracking-widest text-white/40">
-          {jukebox ? "Jukebox session" : "Live session"}
+          {jams ? "WAM Jams" : jukebox ? "Jukebox session" : "Live session"}
         </p>
         <p className="mt-1 font-mono text-2xl font-bold tracking-[0.3em] text-wam">{code}</p>
         {session.anonymous_mode ? (
@@ -327,19 +368,56 @@ export default function LiveSessionPage() {
             Anonymous mode — you are {displayName}
           </p>
         ) : null}
+        <SessionTimer
+          session={session}
+          onExpire={() => {
+            if (!canControlPlayback) return;
+            void fetch(`/api/live/${session.id}/end`, { method: "POST" }).then(() => {
+              window.location.href = `/live/${code}/summary`;
+            });
+          }}
+        />
         <p className={cn(pageSub, "mt-2")}>
           {ratedCount} of {onlineCount} rated this track
         </p>
+        {session.wam_controls_playback ? (
+          <p className="mt-1 text-xs text-wam">● WAM controls playback</p>
+        ) : null}
       </header>
 
-      <div className={cn(jukebox && "grid gap-6 lg:grid-cols-[1fr_280px]")}>
+      {jams ? (
+        <LiveJamsRoom
+          session={session}
+          userId={userId}
+          participants={participants}
+          hideAvatars={hideAvatars}
+          queue={queue}
+          scores={scores}
+          allRatings={allRatings}
+          aggregate={displayAggregate}
+          genreTags={genreTags}
+          moodTags={moodTags}
+          ratedCount={ratedCount}
+          onlineCount={onlineCount}
+          canControlPlayback={canControlPlayback}
+          advancing={advancing}
+          submitting={submitting}
+          hasSource={hasSource}
+          onSessionUpdate={applySession}
+          onAdvance={() => void handleNextTrack()}
+          onEndSession={() => void handleEndSession()}
+          onSubmitRating={handleSubmit}
+          onRefresh={handleRefresh}
+        />
+      ) : (
+      <div className={cn(wideLayout && "grid gap-6 lg:grid-cols-[1fr_280px]")}>
         <div className="min-w-0 space-y-6">
           <LiveNowPlaying session={session} />
 
-          {isHost && jukebox ? (
+          {canControlPlayback && (jukebox || jams) ? (
             <button
               type="button"
-              disabled={advancing || queue.length === 0}
+              disabled={advancing || (!jams && queue.length === 0)}
               onClick={() => void handleNextTrack()}
               className="w-full rounded-full bg-wam py-3.5 text-sm font-semibold text-black transition-opacity hover:bg-wam/90 disabled:opacity-40"
             >
@@ -418,11 +496,13 @@ export default function LiveSessionPage() {
           <JukeboxScoreboard
             scores={scores}
             rankingMode={session.jukebox_ranking_mode}
+            rankingVisibility={session.ranking_visibility}
             userId={userId}
             hideAvatars={hideAvatars}
           />
         ) : null}
       </div>
+      )}
     </main>
   );
 }

@@ -4,6 +4,7 @@ import {
   playbackToSessionPatch,
   sessionPlaybackChanged,
 } from "@/lib/live/mapPlaybackToSession";
+import { shouldSkipHostPlaybackSync } from "@/lib/live/sessionMode";
 import { fetchCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
@@ -48,6 +49,11 @@ export async function PATCH(
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  const session = row as LiveSessionRow;
+  if (shouldSkipHostPlaybackSync(session)) {
+    return NextResponse.json({ session, unchanged: true, syncSkipped: true });
+  }
+
   let accessToken: string;
   try {
     accessToken = await requireProviderAccessToken(supabase);
@@ -63,10 +69,6 @@ export async function PATCH(
   }
 
   const playback = await fetchCurrentPlayback(accessToken);
-  const session = row as LiveSessionRow;
-  if (session.jukebox_enabled) {
-    return NextResponse.json({ session, unchanged: true, jukebox: true });
-  }
 
   const patch = playbackToSessionPatch(
     playback && "trackId" in playback && playback.itemKind === "track"

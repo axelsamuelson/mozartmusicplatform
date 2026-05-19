@@ -48,7 +48,7 @@ export async function GET() {
     return NextResponse.json({ error: msg || "Auth failed" }, { status: 401 });
   }
 
-  const cacheKey = `playlists:${user.id}`;
+  const cacheKey = `playlists:v2:${user.id}`;
 
   let summaries: SpotifyMyPlaylistSummary[];
   try {
@@ -111,7 +111,9 @@ export async function GET() {
 
     const playlists: SpotifyPlaylistListItem[] = summaries.map((pl) => {
       const cached = tracksMap.get(pl.id);
-      const total_tracks = pl.total_tracks;
+      const total_tracks = cached
+        ? Math.max(pl.total_tracks, cached.total_tracks)
+        : pl.total_tracks;
 
       if (cached) {
         const stats = statsFromTrackIds(

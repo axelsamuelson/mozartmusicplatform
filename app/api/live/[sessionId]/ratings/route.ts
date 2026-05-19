@@ -4,6 +4,7 @@ import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
 import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
 import { maybeAutoFinalizeTrackScores } from "@/lib/live/jukeboxScores";
 import { loadSessionScores } from "@/lib/live/jukeboxQueue";
+import { getLiveSessionMode, sessionHasScores } from "@/lib/live/sessionMode";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { loadLiveRatingsForSession } from "@/lib/live/loadLiveRatings";
 import { persistLiveRatingToLibrary } from "@/lib/live/persistLiveRating";
@@ -46,7 +47,7 @@ export async function GET(
       (moods ?? []) as MoodTagRow[],
     );
 
-    const scores = session.jukebox_enabled
+    const scores = sessionHasScores(session)
       ? await loadSessionScores(supabase, sessionId)
       : undefined;
 
@@ -62,6 +63,9 @@ type PostBody = {
   mood_tag_id?: number | null;
   genre_ids?: number[];
   comment?: string | null;
+  spotify_track_id?: string;
+  is_retroactive?: boolean;
+  rating_time_ms?: number | null;
 };
 
 export async function POST(
@@ -125,7 +129,11 @@ export async function POST(
     return NextResponse.json({ error: msg }, { status: 500 });
   }
 
-  const trackId = session.spotify_track_id;
+  const isRetroactive = body.is_retroactive === true;
+  const trackId =
+    typeof body.spotify_track_id === "string" && body.spotify_track_id.trim()
+      ? body.spotify_track_id.trim()
+      : session.spotify_track_id;
   if (!trackId) {
     return NextResponse.json(
       { error: "No track is playing in this session yet." },
@@ -134,12 +142,13 @@ export async function POST(
   }
 
   if (
-    session.jukebox_enabled &&
+    !isRetroactive &&
+    sessionHasScores(session) &&
     session.current_track_user_id &&
     session.current_track_user_id === user.id
   ) {
     return NextResponse.json(
-      { error: "You cannot rate your own queued track in Jukebox mode" },
+      { error: "You cannot rate your own queued track" },
       { status: 403 },
     );
   }
@@ -180,17 +189,33 @@ export async function POST(
     );
   }
 
-  try {
-    await persistLiveRatingToLibrary(
-      supabase,
-      user.id,
-      session,
-      { score, mood_tag_id, genre_ids, comment, display_name },
-      { previousScore: prior?.score as number | undefined },
-    );
-  } catch (e) {
-    if (process.env.NODE_ENV === "development") {
-      console.warn("[live] persist to library failed:", e);
+  await supabase.from("live_session_ratings").upsert(
+    {
+      session_id: sessionId,
+      user_id: user.id,
+      spotify_track_id: trackId,
+      score,
+      mood_tag_id,
+      is_retroactive: isRetroactive,
+      rating_time_ms:
+        typeof body.rating_time_ms === "number" ? body.rating_time_ms : null,
+    },
+    { onConflict: "session_id,user_id,spotify_track_id,is_retroactive" },
+  );
+
+  if (!isRetroactive) {
+    try {
+      await persistLiveRatingToLibrary(
+        supabase,
+        user.id,
+        session,
+        { score, mood_tag_id, genre_ids, comment, display_name },
+        { previousScore: prior?.score as number | undefined },
+      );
+    } catch (e) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("[live] persist to library failed:", e);
+      }
     }
   }
 
@@ -203,11 +228,11 @@ export async function POST(
   const aggregate = aggregateLiveRatings(ratings, (moods ?? []) as MoodTagRow[]);
 
   let scoresUpdate = null;
-  if (session.jukebox_enabled) {
+  if (getLiveSessionMode(session) === "jukebox") {
     scoresUpdate = await maybeAutoFinalizeTrackScores(supabase, session);
   }
 
-  const scores = session.jukebox_enabled
+  const scores = sessionHasScores(session)
     ? await loadSessionScores(supabase, sessionId)
     : undefined;
 

@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 export type JukeboxScoreboardProps = {
   scores: LiveScoreRow[];
   rankingMode?: string | null;
+  rankingVisibility?: "full" | "masked" | "end_only" | null;
   userId: string | null;
   hideAvatars?: boolean;
   className?: string;
@@ -41,15 +42,38 @@ function sortScores(scores: LiveScoreRow[], mode: JukeboxRankingMode): LiveScore
 export function JukeboxScoreboard({
   scores,
   rankingMode,
+  rankingVisibility = "full",
   userId,
   hideAvatars,
   className,
 }: JukeboxScoreboardProps) {
   const mode = normalizeJukeboxRankingMode(rankingMode);
+  const visibility = rankingVisibility ?? "full";
+
+  if (visibility === "end_only") {
+    return (
+      <section className={cn(glassCard, className)}>
+        <h2 className="mb-2 text-center text-xs uppercase tracking-wider text-white/40">
+          Ranking
+        </h2>
+        <p className="py-8 text-center text-sm text-white/45">
+          Rankings revealed at session end
+        </p>
+      </section>
+    );
+  }
   const prevMetric = useRef<Map<string, number>>(new Map());
   const [floaters, setFloaters] = useState<FloatBonus[]>([]);
 
   const ranked = useMemo(() => sortScores(scores, mode), [scores, mode]);
+
+  const displayRows = useMemo(() => {
+    if (visibility !== "masked") return ranked;
+    const top3 = ranked.slice(0, 3);
+    const mine = ranked.find((r) => r.user_id === userId);
+    if (!mine || top3.some((r) => r.user_id === userId)) return top3;
+    return [...top3, mine];
+  }, [ranked, visibility, userId]);
 
   useEffect(() => {
     if (mode !== "points") {
@@ -93,13 +117,13 @@ export function JukeboxScoreboard({
         {mode === "average" ? "By mean group rating" : "By points"}
       </p>
 
-      {ranked.length === 0 ? (
+      {displayRows.length === 0 ? (
         <p className="py-4 text-center text-sm text-white/50">
           Everyone starts equal — queue songs to climb the board.
         </p>
       ) : null}
 
-      {ranked.length > 0 ? (
+      {displayRows.length > 0 ? (
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm">
             <thead>
@@ -111,7 +135,7 @@ export function JukeboxScoreboard({
               </tr>
             </thead>
             <tbody>
-              {ranked.map((row, index) => {
+              {displayRows.map((row, index) => {
                 const isMe = row.user_id === userId;
                 const floater = floaters.find((f) => f.userId === row.user_id);
                 const avg = row.avg_score;

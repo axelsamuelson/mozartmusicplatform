@@ -23,6 +23,7 @@ import {
   recordSpotify429,
   recordSpotifySuccess,
 } from "@/lib/spotify/rateLimiter";
+import { hasSpotifyProviderCredentials } from "@/lib/spotify/spotifyTokenMetadata";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 
@@ -110,20 +111,18 @@ export async function GET() {
   const {
     data: { session },
   } = await supabase.auth.getSession();
-  const hasProviderToken = Boolean(session?.provider_token);
-  const hasProviderRefresh = Boolean(session?.provider_refresh_token);
+  const hasCredentials = hasSpotifyProviderCredentials(session, user);
   const circuit = getSpotifyCircuitState();
 
   if (IS_DEV) {
     console.log("[playback] request", {
       userId: user.id,
-      hasProviderToken,
-      hasProviderRefresh,
+      hasCredentials,
       circuit,
     });
   }
 
-  if (!hasProviderToken && !hasProviderRefresh) {
+  if (!hasCredentials) {
     return NextResponse.json(
       { error: "no_token" },
       { status: 401, headers: { "Cache-Control": CACHE_NO_STORE } },

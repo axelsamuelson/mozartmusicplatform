@@ -5,6 +5,7 @@ import {
   loadPendingQueue,
   pickAndApplyNextTrack,
 } from "@/lib/live/jukeboxQueue";
+import { getLiveSessionMode } from "@/lib/live/sessionMode";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -34,7 +35,14 @@ export async function POST(
   if (session.host_user_id !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!session.jukebox_enabled) {
+  const mode = getLiveSessionMode(session);
+  if (mode === "jams") {
+    return NextResponse.json(
+      { error: "Use Jams advance in WAM Jams sessions" },
+      { status: 400 },
+    );
+  }
+  if (mode !== "jukebox") {
     return NextResponse.json({ error: "Jukebox mode is not enabled" }, { status: 400 });
   }
 

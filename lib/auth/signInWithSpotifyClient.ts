@@ -1,5 +1,6 @@
 "use client";
 
+import { buildAuthCallbackUrl, getClientAppOrigin } from "@/lib/auth/appUrl";
 import { createClient } from "@/lib/supabase/client";
 import { SPOTIFY_OAUTH_SCOPES } from "@/lib/spotify/oauthScopes";
 
@@ -39,9 +40,8 @@ export async function signInWithSpotifyClient(nextPath?: string): Promise<void> 
       ? sessionStorage.getItem("wam_pending_share")
       : null) ??
     "/dashboard";
-  const safeNext =
-    next.startsWith("/") && !next.startsWith("//") ? next : "/dashboard";
-  const redirectTo = `${window.location.origin}/auth/callback?next=${encodeURIComponent(safeNext)}`;
+  const origin = getClientAppOrigin();
+  const redirectTo = buildAuthCallbackUrl(origin, next);
 
   console.log("OAuth options:", { scopes: SPOTIFY_OAUTH_SCOPES, redirectTo });
 

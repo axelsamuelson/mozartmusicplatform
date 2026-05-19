@@ -149,11 +149,11 @@ export function LiveAddFromShare() {
       const sessRes = await fetch(`/api/live?code=${encodeURIComponent(code)}`);
       const sessBody = (await sessRes.json().catch(() => ({}))) as {
         error?: string;
-        session?: { id: string; jukebox_enabled?: boolean };
+        session?: { id: string; jukebox_enabled?: boolean; jams_enabled?: boolean };
       };
       if (!sessRes.ok) throw new Error(sessBody.error || "Session not found");
-      if (!sessBody.session?.jukebox_enabled) {
-        throw new Error("That session does not have Jukebox mode enabled");
+      if (!sessBody.session?.jukebox_enabled && !sessBody.session?.jams_enabled) {
+        throw new Error("That session does not have queue mode enabled");
       }
 
       await addToQueue(sessBody.session.id, state.track);

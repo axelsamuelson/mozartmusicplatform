@@ -7,6 +7,7 @@ import { toast } from "sonner";
 
 import { LiveNowPlaying } from "@/components/LiveNowPlaying";
 import { LiveParticipants } from "@/components/LiveParticipants";
+import { JamsHostSettings } from "@/components/live/JamsHostSettings";
 import { ShareFromSpotifyPanel } from "@/components/live/ShareFromSpotifyPanel";
 import { Button } from "@/components/ui/button";
 import {
@@ -78,6 +79,9 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
   const [updatingJukebox, setUpdatingJukebox] = useState(false);
   const [updatingRankingMode, setUpdatingRankingMode] = useState(false);
   const [updatingHideQueueNames, setUpdatingHideQueueNames] = useState(false);
+  const [updatingJams, setUpdatingJams] = useState(false);
+  const [updatingWamPlayback, setUpdatingWamPlayback] = useState(false);
+  const [updatingSettings, setUpdatingSettings] = useState(false);
   const [advancing, setAdvancing] = useState(false);
 
   useEffect(() => {
@@ -247,11 +251,82 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
     }
   }
 
+  async function patchSession(patch: Record<string, unknown>) {
+    if (!active?.sessionId || !session) return;
+    setUpdatingSettings(true);
+    try {
+      const res = await fetch(`/api/live/${active.sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        session?: LiveSessionRow;
+      };
+      if (!res.ok) throw new Error(body.error || "Could not update session");
+      if (body.session) setSession(body.session);
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update session");
+    } finally {
+      setUpdatingSettings(false);
+    }
+  }
+
+  async function handleJamsModeChange(next: boolean) {
+    if (!active?.sessionId) return;
+    setUpdatingJams(true);
+    try {
+      const res = await fetch(`/api/live/${active.sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jams_enabled: next }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        session?: LiveSessionRow;
+      };
+      if (!res.ok) throw new Error(body.error || "Could not update");
+      if (body.session) setSession(body.session);
+      toast.success(next ? "WAM Jams on" : "WAM Jams off");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update");
+    } finally {
+      setUpdatingJams(false);
+    }
+  }
+
+  async function handleWamPlaybackChange(next: boolean) {
+    if (!active?.sessionId) return;
+    setUpdatingWamPlayback(true);
+    try {
+      const res = await fetch(`/api/live/${active.sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wam_controls_playback: next }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        session?: LiveSessionRow;
+      };
+      if (!res.ok) throw new Error(body.error || "Could not update");
+      if (body.session) setSession(body.session);
+      toast.success(next ? "WAM controls playback" : "Manual playback");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not update");
+    } finally {
+      setUpdatingWamPlayback(false);
+    }
+  }
+
   async function handleNextTrack() {
     if (!active?.sessionId) return;
     setAdvancing(true);
     try {
-      const res = await fetch(`/api/live/${active.sessionId}/queue/next`, {
+      const endpoint = session?.jams_enabled
+        ? `/api/live/${active.sessionId}/advance`
+        : `/api/live/${active.sessionId}/queue/next`;
+      const res = await fetch(endpoint, {
         method: "POST",
       });
       const body = (await res.json().catch(() => ({}))) as {
@@ -295,7 +370,7 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
     if (!active) return;
     setEnding(true);
     try {
-      const res = await fetch(`/api/live/${active.sessionId}`, { method: "DELETE" });
+      const res = await fetch(`/api/live/${active.sessionId}/end`, { method: "POST" });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as { error?: string };
         throw new Error(body.error || "Could not end session");
@@ -305,6 +380,9 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
       setSession(null);
       setDialogOpen(false);
       toast.success("Live session ended");
+      if (code) {
+        window.location.href = `/live/${code}/summary`;
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not end session");
     } finally {
@@ -375,6 +453,51 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
               <p className="text-center font-mono text-4xl font-bold tracking-[0.35em] text-wam">
                 {formattedCode}
               </p>
+
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="flex items-center gap-1.5 text-sm font-medium text-white">
+                      <Radio className="size-4 shrink-0 text-wam/90" aria-hidden />
+                      WAM Jams
+                    </p>
+                    <p className="mt-1 text-xs text-white/45">
+                      Slot rotation, buffers, session ratings.
+                    </p>
+                  </div>
+                  <AnonymousModeToggle
+                    enabled={Boolean(session?.jams_enabled)}
+                    disabled={updatingJams}
+                    onChange={(next) => void handleJamsModeChange(next)}
+                  />
+                </div>
+              </div>
+
+              {session?.jams_enabled ? (
+                <>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-white">WAM controls playback</p>
+                        <p className="mt-1 text-xs text-white/45">
+                          Host Spotify plays each track automatically.
+                        </p>
+                      </div>
+                      <AnonymousModeToggle
+                        enabled={Boolean(session.wam_controls_playback)}
+                        disabled={updatingWamPlayback}
+                        onChange={(next) => void handleWamPlaybackChange(next)}
+                      />
+                    </div>
+                  </div>
+                  <JamsHostSettings
+                    session={session}
+                    participants={participants}
+                    disabled={updatingSettings}
+                    onPatch={patchSession}
+                  />
+                </>
+              ) : null}
 
               <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -458,7 +581,7 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
                 <LiveNowPlaying session={session} className="!p-4" />
               ) : null}
 
-              {session?.jukebox_enabled ? (
+              {session?.jukebox_enabled || session?.jams_enabled ? (
                 <>
                   <ShareFromSpotifyPanel sessionCode={formattedCode} />
                   <Button

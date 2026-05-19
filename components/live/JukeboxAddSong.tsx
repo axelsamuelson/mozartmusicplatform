@@ -16,6 +16,8 @@ export type JukeboxAddSongProps = {
   myQueueCount: number;
   maxPerUser: number;
   disabled?: boolean;
+  /** Jams: jump-queue manual track */
+  isManual?: boolean;
   onAdded?: () => void;
   className?: string;
 };
@@ -25,6 +27,7 @@ export function JukeboxAddSong({
   myQueueCount,
   maxPerUser,
   disabled,
+  isManual,
   onAdded,
   className,
 }: JukeboxAddSongProps) {
@@ -83,7 +86,7 @@ export function JukeboxAddSong({
       const res = await fetch(`/api/live/${sessionId}/queue`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(track),
+        body: JSON.stringify({ ...track, is_manual: isManual ?? false }),
       });
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) throw new Error(body.error || "Could not add track");

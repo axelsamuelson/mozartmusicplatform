@@ -3,6 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { finalizeTrackScores } from "@/lib/live/jukeboxScores";
 import { loadSessionScores } from "@/lib/live/jukeboxQueue";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
+import { sessionHasScores } from "@/lib/live/sessionMode";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import type { LiveQueueRow } from "@/lib/types/live";
@@ -71,8 +72,11 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
-  if (!session.jukebox_enabled) {
-    return NextResponse.json({ error: "Jukebox mode is not enabled" }, { status: 400 });
+  if (!sessionHasScores(session)) {
+    return NextResponse.json(
+      { error: "Scoring is not enabled for this session mode" },
+      { status: 400 },
+    );
   }
 
   const queueId = body.queue_id ?? session.current_queue_id;

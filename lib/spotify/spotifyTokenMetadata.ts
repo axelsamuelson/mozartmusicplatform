@@ -25,6 +25,26 @@ export function sessionProviderTokenIsFresh(
   return expiresAt > Math.floor(Date.now() / 1000) + TOKEN_EXPIRY_BUFFER_SEC;
 }
 
+/** True when we can refresh Spotify (session or persisted user_metadata). */
+export function hasSpotifyRefreshToken(
+  session: { provider_refresh_token?: string | null } | null | undefined,
+  user: User | null | undefined,
+): boolean {
+  return Boolean(
+    session?.provider_refresh_token?.length || spotifyRefreshFromUser(user),
+  );
+}
+
+export function hasSpotifyProviderCredentials(
+  session:
+    | { provider_token?: string | null; provider_refresh_token?: string | null }
+    | null
+    | undefined,
+  user: User | null | undefined,
+): boolean {
+  return Boolean(session?.provider_token) || hasSpotifyRefreshToken(session, user);
+}
+
 /** Persist Spotify refresh + expiry in user_metadata (survives Supabase session refresh). */
 export async function persistSpotifyTokenMetadata(
   supabase: SupabaseClient,

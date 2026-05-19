@@ -5,6 +5,14 @@ import {
   sessionProviderTokenIsFresh,
   spotifyRefreshFromUser,
 } from "@/lib/spotify/spotifyTokenMetadata";
+import {
+  getCachedSpotifyAccess,
+  getInflightSpotifyRefresh,
+  markSpotifyMetadataPersisted,
+  setCachedSpotifyAccess,
+  setInflightSpotifyRefresh,
+  shouldPersistSpotifyMetadata,
+} from "@/lib/spotify/tokenRefreshCache";
 
 type SpotifyRefreshResponse = {
   access_token: string;
@@ -47,6 +55,33 @@ async function refreshSpotifyUserToken(
   return (await res.json()) as SpotifyRefreshResponse;
 }
 
+async function persistMetadataThrottled(
+  supabase: SupabaseClient,
+  userId: string,
+  opts: {
+    provider_refresh_token?: string | null;
+    expiresIn?: number;
+  },
+): Promise<void> {
+  if (!shouldPersistSpotifyMetadata(userId)) return;
+  await persistSpotifyTokenMetadata(supabase, opts);
+  markSpotifyMetadataPersisted(userId);
+}
+
+async function refreshAndCache(
+  supabase: SupabaseClient,
+  userId: string,
+  refresh: string,
+): Promise<string> {
+  const data = await refreshSpotifyUserToken(refresh);
+  setCachedSpotifyAccess(userId, data.access_token, data.expires_in);
+  await persistMetadataThrottled(supabase, userId, {
+    provider_refresh_token: data.refresh_token ?? refresh,
+    expiresIn: data.expires_in,
+  });
+  return data.access_token;
+}
+
 /**
  * Spotify user access token: session provider_token when fresh, otherwise refresh
  * via provider_refresh_token (session or user_metadata from first login).
@@ -63,9 +98,17 @@ export async function getValidProviderAccessToken(
     throw new Error("MISSING_SPOTIFY_TOKEN");
   }
 
+  const userId = user?.id ?? session.user.id;
+
+  const cached = getCachedSpotifyAccess(userId);
+  if (cached) return cached;
+
   if (sessionProviderTokenIsFresh(session.provider_token, user)) {
     return session.provider_token;
   }
+
+  const inflight = getInflightSpotifyRefresh(userId);
+  if (inflight) return inflight;
 
   const refresh =
     session.provider_refresh_token ?? spotifyRefreshFromUser(user);
@@ -74,12 +117,7 @@ export async function getValidProviderAccessToken(
     throw new Error("MISSING_SPOTIFY_REFRESH");
   }
 
-  const data = await refreshSpotifyUserToken(refresh);
-
-  await persistSpotifyTokenMetadata(supabase, {
-    provider_refresh_token: data.refresh_token ?? refresh,
-    expiresIn: data.expires_in,
-  });
-
-  return data.access_token;
+  const promise = refreshAndCache(supabase, userId, refresh);
+  setInflightSpotifyRefresh(userId, promise);
+  return promise;
 }

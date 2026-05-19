@@ -8,6 +8,11 @@ import {
 } from "@/lib/live/jukeboxQueue";
 import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
+import {
+  getLiveSessionMode,
+  sessionHasQueue,
+  usesJukeboxQueueOrdering,
+} from "@/lib/live/sessionMode";
 import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -55,6 +60,7 @@ type PostBody = {
   track_name?: string;
   artist_name?: string | null;
   image_url?: string | null;
+  is_manual?: boolean;
 };
 
 export async function POST(
@@ -95,16 +101,36 @@ export async function POST(
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
-  if (!session.jukebox_enabled) {
+  const isManual = body.is_manual === true;
+  const mode = getLiveSessionMode(session);
+  if (!sessionHasQueue(session)) {
     return NextResponse.json(
-      { error: "Jukebox mode is not enabled for this session" },
+      { error: "Queue is not enabled for this session" },
+      { status: 400 },
+    );
+  }
+  if (mode === "jams" && !isManual) {
+    return NextResponse.json(
+      {
+        error:
+          "In WAM Jams, tracks rotate from your source buffer. Use a manual jump to queue one track for your next slot.",
+      },
       { status: 400 },
     );
   }
 
   const pending = await loadPendingQueue(supabase, sessionId);
   const myPending = pending.filter((q) => q.user_id === user.id);
-  if (myPending.length >= MAX_QUEUE_TRACKS_PER_USER) {
+
+  if (isManual) {
+    const existingManual = myPending.some((q) => q.is_manual);
+    if (existingManual) {
+      return NextResponse.json(
+        { error: "You already have a manual track waiting for your next slot" },
+        { status: 400 },
+      );
+    }
+  } else if (myPending.length >= MAX_QUEUE_TRACKS_PER_USER) {
     return NextResponse.json(
       { error: `You can only have ${MAX_QUEUE_TRACKS_PER_USER} tracks in the queue` },
       { status: 400 },
@@ -143,6 +169,7 @@ export async function POST(
       artist_name,
       image_url,
       position: pending.length + 1,
+      is_manual: isManual,
     })
     .select("*")
     .single();
@@ -167,7 +194,9 @@ export async function POST(
       },
       { onConflict: "session_id,user_id", ignoreDuplicates: true },
     );
-    await recomputeQueuePositions(admin, session);
+    if (usesJukeboxQueueOrdering(session)) {
+      await recomputeQueuePositions(admin, session);
+    }
     const queue = await loadPendingQueue(admin, sessionId);
     const myCount = queue.filter((q) => q.user_id === user.id).length;
     return NextResponse.json({
@@ -208,8 +237,8 @@ export async function DELETE(
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
-  if (!session.jukebox_enabled) {
-    return NextResponse.json({ error: "Jukebox mode is not enabled" }, { status: 400 });
+  if (!sessionHasQueue(session)) {
+    return NextResponse.json({ error: "Queue is not enabled for this session" }, { status: 400 });
   }
 
   const { data: row, error: fetchErr } = await supabase
@@ -245,7 +274,9 @@ export async function DELETE(
 
   try {
     const admin = createAdminClient();
-    await recomputeQueuePositions(admin, session);
+    if (usesJukeboxQueueOrdering(session)) {
+      await recomputeQueuePositions(admin, session);
+    }
     const queue = await loadPendingQueue(admin, sessionId);
     return NextResponse.json({ queue });
   } catch (e) {

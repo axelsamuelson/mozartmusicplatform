@@ -4,7 +4,7 @@ export interface SpotifyPlaylistListItem {
   name: string;
   image_url: string | null;
   owner: string;
-  /** From Spotify `tracks.total` on the playlist object. */
+  /** From Spotify `items.total` (or legacy `tracks.total`) on the playlist object. */
   total_tracks: number;
   /** Present when playlist_tracks cache matches Spotify total_tracks. */
   rated_count: number | null;
