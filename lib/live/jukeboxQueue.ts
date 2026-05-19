@@ -1,10 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  assignFifoQueuePositions,
   assignQueuePositions,
+  pickNextFifoQueueItem,
   pickNextQueueItem,
   playedCountByUser,
 } from "@/lib/live/jukeboxPriority";
+import { usesJukeboxQueueOrdering } from "@/lib/live/sessionMode";
 import type { LiveQueueRow, LiveScoreRow, LiveSessionRow } from "@/lib/types/live";
 
 export async function loadPendingQueue(
@@ -51,21 +54,22 @@ export async function loadSessionScores(
 
 export async function recomputeQueuePositions(
   admin: SupabaseClient,
-  session: Pick<LiveSessionRow, "id" | "jukebox_ranking_mode">,
+  session: Pick<
+    LiveSessionRow,
+    "id" | "jukebox_ranking_mode" | "jams_enabled" | "jukebox_enabled"
+  >,
 ): Promise<void> {
   const sessionId = session.id;
-  const [pending, played, scores] = await Promise.all([
-    loadPendingQueue(admin, sessionId),
+  const pending = await loadPendingQueue(admin, sessionId);
+  const [played, scores] = await Promise.all([
     loadPlayedQueue(admin, sessionId),
     loadSessionScores(admin, sessionId),
   ]);
 
-  const updates = assignQueuePositions(
-    pending,
-    scores,
-    played,
-    session.jukebox_ranking_mode,
-  );
+  const updates = usesJukeboxQueueOrdering(session)
+    ? assignQueuePositions(pending, scores, played, session.jukebox_ranking_mode)
+    : assignFifoQueuePositions(pending);
+
   await Promise.all(
     updates.map(({ id, position }) =>
       admin.from("live_queue").update({ position }).eq("id", id),
@@ -106,12 +110,9 @@ export async function pickAndApplyNextTrack(
   ]);
 
   const playedCounts = playedCountByUser(allPlayedRows.data ?? []);
-  const next = pickNextQueueItem(
-    pending,
-    scores,
-    playedCounts,
-    session.jukebox_ranking_mode,
-  );
+  const next = usesJukeboxQueueOrdering(session)
+    ? pickNextQueueItem(pending, scores, playedCounts, session.jukebox_ranking_mode)
+    : pickNextFifoQueueItem(pending);
 
   if (!next) {
     const { data: cleared } = await admin

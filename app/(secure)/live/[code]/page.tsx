@@ -74,13 +74,15 @@ export default function LiveSessionPage() {
 
   const sessionMode = session ? getEffectiveLiveSessionMode(session) : "legacy";
   const jams = sessionMode === "jams";
+  const fifoQueue = sessionMode === "queue";
   const jukebox = sessionMode === "jukebox";
   const hasQueue = session ? sessionHasQueue(session) : false;
+  const showSongQueue = fifoQueue || jukebox;
   const isHost = Boolean(session && userId && session.host_user_id === userId);
   const isCoHost = Boolean(session && userId && session.co_host_user_id === userId);
   const canControlPlayback = isHost || isCoHost;
   const isTrackOwner = Boolean(
-    jukebox && userId && session?.current_track_user_id === userId,
+    showSongQueue && userId && session?.current_track_user_id === userId,
   );
 
   const currentRatings = useMemo(
@@ -352,7 +354,7 @@ export default function LiveSessionPage() {
     }
   }
 
-  const wideLayout = jukebox || jams;
+  const wideLayout = jukebox;
   const mainClass = wideLayout
     ? "mx-auto max-w-5xl px-4 pb-32 pt-24 md:pt-28"
     : "mx-auto max-w-lg px-4 pb-32 pt-24 md:pt-28";
@@ -454,7 +456,7 @@ export default function LiveSessionPage() {
         <div className="min-w-0 space-y-6">
           <LiveNowPlaying session={session} />
 
-          {canControlPlayback && (jukebox || jams) ? (
+          {canControlPlayback && (showSongQueue || jams) ? (
             <button
               type="button"
               disabled={advancing || (!jams && queue.length === 0)}
@@ -465,7 +467,7 @@ export default function LiveSessionPage() {
             </button>
           ) : null}
 
-          {jukebox ? (
+          {showSongQueue ? (
             <>
               <JukeboxQueue
                 queue={queue}
@@ -515,7 +517,7 @@ export default function LiveSessionPage() {
           {!session.spotify_track_id ? (
             <section className={cn(glassCard)}>
               <p className="text-center text-sm text-white/50">
-                {jukebox
+                {showSongQueue
                   ? isHost
                     ? "Press Next track when the room is ready to play from the queue."
                     : "Waiting for the host to start the queue…"

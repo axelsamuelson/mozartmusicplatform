@@ -30,6 +30,7 @@ import { useLiveSessionDisplayName } from "@/lib/live/useLiveSessionDisplayName"
 import { liveAvatarUrl } from "@/lib/live/userDisplay";
 import { createClient } from "@/lib/supabase/client";
 import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
+import { isLiveQueueEnabled } from "@/lib/live/liveSessionFeatures";
 import { normalizeJukeboxRankingMode } from "@/lib/live/jukeboxRanking";
 import type { ActiveLiveSessionRef, JukeboxRankingMode, LiveSessionRow } from "@/lib/types/live";
 import { formatSessionCode } from "@/lib/utils/sessionCode";
@@ -74,6 +75,7 @@ function AnonymousModeToggle({
 
 export function LiveSessionButton({ canStart, className }: LiveSessionButtonProps) {
   const advancedModes = isLiveAdvancedModesEnabled();
+  const songQueueEnabled = isLiveQueueEnabled();
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [active, setActive] = useState<ActiveLiveSessionRef | null>(null);
@@ -207,7 +209,15 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
       };
       if (!res.ok) throw new Error(body.error || "Could not update session");
       if (body.session) setSession(body.session);
-      toast.success(next ? "Jukebox mode on" : "Jukebox mode off");
+      toast.success(
+        next
+          ? advancedModes
+            ? "Jukebox mode on"
+            : "Song queue on"
+          : advancedModes
+            ? "Jukebox mode off"
+            : "Song queue off",
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not update session");
     } finally {
@@ -464,6 +474,47 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
               <p className="text-center font-mono text-4xl font-bold tracking-[0.35em] text-wam">
                 {formattedCode}
               </p>
+
+              {songQueueEnabled && !advancedModes ? (
+                <>
+                  <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <p className="flex items-center gap-1.5 text-sm font-medium text-white">
+                          <ListMusic className="size-4 shrink-0 text-wam/90" aria-hidden />
+                          Song queue
+                        </p>
+                        <p className="mt-1 text-xs text-white/45">
+                          Guests add tracks — you press Next in order added.
+                        </p>
+                      </div>
+                      <AnonymousModeToggle
+                        enabled={Boolean(session?.jukebox_enabled)}
+                        disabled={updatingJukebox}
+                        onChange={(next) => void handleJukeboxModeChange(next)}
+                      />
+                    </div>
+                  </div>
+
+                  {session?.jukebox_enabled ? (
+                    <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-medium text-white">Hide queue names</p>
+                          <p className="mt-1 text-xs text-white/45">
+                            Do not show who queued each song in the list.
+                          </p>
+                        </div>
+                        <AnonymousModeToggle
+                          enabled={Boolean(session.hide_queue_names)}
+                          disabled={updatingHideQueueNames}
+                          onChange={(next) => void handleHideQueueNamesChange(next)}
+                        />
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              ) : null}
 
               {advancedModes ? (
               <>

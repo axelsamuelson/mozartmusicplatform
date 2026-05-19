@@ -1,12 +1,15 @@
 import { NextResponse } from "next/server";
 
-import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
 import { finalizeTrackScores } from "@/lib/live/jukeboxScores";
 import {
   loadPendingQueue,
   pickAndApplyNextTrack,
 } from "@/lib/live/jukeboxQueue";
-import { getLiveSessionMode } from "@/lib/live/sessionMode";
+import { isLiveSessionFeaturesEnabled } from "@/lib/live/liveSessionFeatures";
+import {
+  getEffectiveLiveSessionMode,
+  sessionHasScores,
+} from "@/lib/live/sessionMode";
 import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSession";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -21,9 +24,9 @@ export async function POST(
     return NextResponse.json({ error: "Invalid session id" }, { status: 400 });
   }
 
-  if (!isLiveAdvancedModesEnabled()) {
+  if (!isLiveSessionFeaturesEnabled()) {
     return NextResponse.json(
-      { error: "Advanced session modes are disabled" },
+      { error: "Live queue is disabled" },
       { status: 403 },
     );
   }
@@ -43,15 +46,15 @@ export async function POST(
   if (session.host_user_id !== user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  const mode = getLiveSessionMode(session);
+  const mode = getEffectiveLiveSessionMode(session);
   if (mode === "jams") {
     return NextResponse.json(
       { error: "Use Jams advance in WAM Jams sessions" },
       { status: 400 },
     );
   }
-  if (mode !== "jukebox") {
-    return NextResponse.json({ error: "Jukebox mode is not enabled" }, { status: 400 });
+  if (mode !== "jukebox" && mode !== "queue") {
+    return NextResponse.json({ error: "Song queue is not enabled" }, { status: 400 });
   }
 
   let admin;
@@ -81,11 +84,13 @@ export async function POST(
 
         if (playErr) throw new Error(playErr.message);
 
-        await finalizeTrackScores(
-          admin,
-          session,
-          (playedItem ?? currentItem) as LiveQueueRow,
-        );
+        if (sessionHasScores(session)) {
+          await finalizeTrackScores(
+            admin,
+            session,
+            (playedItem ?? currentItem) as LiveQueueRow,
+          );
+        }
       }
     }
 

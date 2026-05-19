@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
+import { isLiveQueueEnabled } from "@/lib/live/liveSessionFeatures";
 import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { createClient } from "@/lib/supabase/server";
 import { persistHostProviderToken } from "@/lib/live/getHostToken";
@@ -103,18 +104,17 @@ export async function PATCH(
   const hasHostDisconnected = body.host_disconnected_at !== undefined;
   const hasAdvanceLock = body.advance_lock_at !== undefined;
 
-  const advancedFieldsRequested =
-    hasJukebox ||
+  const queueFieldsRequested = hasJukebox || hasHideQueueNames;
+  const advancedOnlyFieldsRequested =
     hasJams ||
     hasWamPlayback ||
     hasRankingMode ||
-    hasHideQueueNames ||
     hasQueueMode ||
     hasRankingVisibility ||
     hasDuration ||
     hasCoHost;
 
-  if (!isLiveAdvancedModesEnabled() && advancedFieldsRequested) {
+  if (!isLiveAdvancedModesEnabled() && advancedOnlyFieldsRequested) {
     return NextResponse.json(
       { error: "Advanced session modes are disabled" },
       { status: 403 },
@@ -122,8 +122,19 @@ export async function PATCH(
   }
 
   if (
+    !isLiveQueueEnabled() &&
+    !isLiveAdvancedModesEnabled() &&
+    queueFieldsRequested
+  ) {
+    return NextResponse.json({ error: "Live queue is disabled" }, { status: 403 });
+  }
+
+  const patchableFieldsRequested =
+    queueFieldsRequested || advancedOnlyFieldsRequested;
+
+  if (
     !hasAnonymous &&
-    !advancedFieldsRequested &&
+    !patchableFieldsRequested &&
     !hasHostDisconnected &&
     !hasAdvanceLock
   ) {
@@ -160,7 +171,7 @@ export async function PATCH(
   if (hasHostDisconnected && !isHost) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
-  if (!isHost && (hasJukebox || hasJams || hasWamPlayback || hasAnonymous || hasRankingMode || hasHideQueueNames || hasQueueMode || hasRankingVisibility || hasDuration || hasCoHost || hasAdvanceLock)) {
+  if (!isHost && (patchableFieldsRequested || hasAnonymous || hasAdvanceLock)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

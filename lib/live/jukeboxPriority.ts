@@ -54,6 +54,31 @@ export function compareQueuePriority(
   return new Date(a.queued_at).getTime() - new Date(b.queued_at).getTime();
 }
 
+/** First-in-first-out — earliest queued_at wins. */
+export function pickNextFifoQueueItem(pending: LiveQueueRow[]): LiveQueueRow | null {
+  if (pending.length === 0) return null;
+  let earliest = pending[0]!;
+  for (let i = 1; i < pending.length; i++) {
+    const candidate = pending[i]!;
+    if (new Date(candidate.queued_at).getTime() < new Date(earliest.queued_at).getTime()) {
+      earliest = candidate;
+    }
+  }
+  return earliest;
+}
+
+export function assignFifoQueuePositions(
+  pending: LiveQueueRow[],
+): { id: string; position: number }[] {
+  const ordered = [...pending].sort(
+    (a, b) => new Date(a.queued_at).getTime() - new Date(b.queued_at).getTime(),
+  );
+  return ordered.map((item, index) => ({
+    id: item.id,
+    position: index + 1,
+  }));
+}
+
 export function pickNextQueueItem(
   pending: LiveQueueRow[],
   scores: LiveScoreRow[],
