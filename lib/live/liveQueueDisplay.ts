@@ -1,8 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-import { getHostToken } from "@/lib/live/getHostToken";
+import { fetchHostPlaybackUpcoming } from "@/lib/live/hostPlaybackUpcoming";
 import { shouldSkipHostPlaybackSync } from "@/lib/live/sessionMode";
-import { fetchSpotifyPlayerQueue } from "@/lib/spotify/playerQueue";
 import type { LiveQueueRow, LiveSessionRow } from "@/lib/types/live";
 
 export const LIVE_QUEUE_DISPLAY_LIMIT = 5;
@@ -57,28 +56,17 @@ export async function buildLiveQueueDisplay(
   const exclude = new Set<string>();
   if (session.spotify_track_id) exclude.add(session.spotify_track_id);
   for (const row of pending) exclude.add(row.spotify_track_id);
-  for (const row of items) exclude.add(row.spotify_track_id);
 
-  let hostToken: string | null = null;
-  try {
-    hostToken = await getHostToken(admin, session);
-  } catch {
-    return items;
-  }
-  if (!hostToken) return items;
-
-  let spotifyQueue: Awaited<ReturnType<typeof fetchSpotifyPlayerQueue>>;
-  try {
-    spotifyQueue = await fetchSpotifyPlayerQueue(hostToken);
-  } catch {
-    return items;
-  }
+  const spotifyUpcoming = await fetchHostPlaybackUpcoming(
+    admin,
+    session,
+    needed,
+    exclude,
+  );
 
   let position = items.length;
-  for (const track of spotifyQueue) {
+  for (const track of spotifyUpcoming) {
     if (items.length >= LIVE_QUEUE_DISPLAY_LIMIT) break;
-    if (exclude.has(track.spotify_track_id)) continue;
-    exclude.add(track.spotify_track_id);
     position += 1;
     items.push({
       kind: "playback",
