@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
 import { finalizeTrackScores } from "@/lib/live/jukeboxScores";
 import {
   loadPendingQueue,
@@ -18,6 +19,13 @@ export async function POST(
   const { sessionId } = await context.params;
   if (!LIVE_SESSION_UUID_RE.test(sessionId)) {
     return NextResponse.json({ error: "Invalid session id" }, { status: 400 });
+  }
+
+  if (!isLiveAdvancedModesEnabled()) {
+    return NextResponse.json(
+      { error: "Advanced session modes are disabled" },
+      { status: 403 },
+    );
   }
 
   const supabase = await createClient();

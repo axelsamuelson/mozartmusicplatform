@@ -5,6 +5,7 @@ import {
   releaseAdvanceLock,
   requireAdvanceLock,
 } from "@/lib/live/advanceLock";
+import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
 import { advanceJamsSession } from "@/lib/live/jamsAdvance";
 import { HostTokenExpiredError } from "@/lib/live/getHostToken";
 import { loadPendingQueue } from "@/lib/live/jukeboxQueue";
@@ -27,6 +28,13 @@ export async function POST(
   const { sessionId } = await context.params;
   if (!LIVE_SESSION_UUID_RE.test(sessionId)) {
     return NextResponse.json({ error: "Invalid session id" }, { status: 400 });
+  }
+
+  if (!isLiveAdvancedModesEnabled()) {
+    return NextResponse.json(
+      { error: "Advanced session modes are disabled" },
+      { status: 403 },
+    );
   }
 
   const supabase = await createClient();

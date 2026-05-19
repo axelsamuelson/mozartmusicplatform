@@ -1,3 +1,4 @@
+import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
 import type { LiveSessionRow } from "@/lib/types/live";
 
 /** Mutually exclusive live modes (jams wins if both flags are set). */
@@ -21,11 +22,19 @@ export function getLiveSessionMode(
   return "legacy";
 }
 
+/** Respects Step 0 gate — always legacy when advanced modes are disabled. */
+export function getEffectiveLiveSessionMode(
+  session: Pick<LiveSessionRow, "jams_enabled" | "jukebox_enabled">,
+): LiveSessionMode {
+  if (!isLiveAdvancedModesEnabled()) return "legacy";
+  return getLiveSessionMode(session);
+}
+
 /** Scoreboard + live_scores (jukebox priority queue or Jams rotation). */
 export function sessionHasScores(
   session: Pick<LiveSessionRow, "jams_enabled" | "jukebox_enabled">,
 ): boolean {
-  return getLiveSessionMode(session) !== "legacy";
+  return getEffectiveLiveSessionMode(session) !== "legacy";
 }
 
 /** Shared queue table (jukebox ordering or Jams manual jumps). */
@@ -39,12 +48,13 @@ export function sessionHasQueue(
 export function usesJukeboxQueueOrdering(
   session: Pick<LiveSessionRow, "jams_enabled" | "jukebox_enabled">,
 ): boolean {
-  return getLiveSessionMode(session) === "jukebox";
+  return getEffectiveLiveSessionMode(session) === "jukebox";
 }
 
 export function usesJamsAdvance(
   session: Pick<LiveSessionRow, "jams_enabled">,
 ): boolean {
+  if (!isLiveAdvancedModesEnabled()) return false;
   return Boolean(session.jams_enabled);
 }
 
@@ -53,7 +63,7 @@ export function usesJamsAdvance(
  * Off for jukebox (host uses Next) and Jams when WAM drives playback.
  */
 export function shouldSkipHostPlaybackSync(session: SessionModeInput): boolean {
-  const mode = getLiveSessionMode(session);
+  const mode = getEffectiveLiveSessionMode(session);
   if (mode === "jukebox") return true;
   if (mode === "jams" && session.wam_controls_playback) return true;
   return false;

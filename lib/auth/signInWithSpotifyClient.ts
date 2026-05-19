@@ -1,6 +1,6 @@
 "use client";
 
-import { buildAuthCallbackUrl, getClientAppOrigin } from "@/lib/auth/appUrl";
+import { buildAuthCallbackUrl } from "@/lib/auth/appUrl";
 import { createClient } from "@/lib/supabase/client";
 import { SPOTIFY_OAUTH_SCOPES } from "@/lib/spotify/oauthScopes";
 
@@ -28,20 +28,18 @@ function logOAuthRedirectUrl(label: string, url: string | null | undefined): voi
  * Callback is still handled server-side at /auth/callback.
  */
 export async function signInWithSpotifyClient(nextPath?: string): Promise<void> {
+  if (typeof window === "undefined") {
+    throw new Error("signInWithSpotifyClient must run in the browser");
+  }
+
   const supabase = createClient();
-  const fromQuery =
-    typeof window !== "undefined"
-      ? new URLSearchParams(window.location.search).get("next")
-      : null;
+  const fromQuery = new URLSearchParams(window.location.search).get("next");
   const next =
     nextPath ??
     fromQuery ??
-    (typeof window !== "undefined"
-      ? sessionStorage.getItem("wam_pending_share")
-      : null) ??
+    sessionStorage.getItem("wam_pending_share") ??
     "/dashboard";
-  const origin = getClientAppOrigin();
-  const redirectTo = buildAuthCallbackUrl(origin, next);
+  const redirectTo = buildAuthCallbackUrl(window.location.origin, next);
 
   console.log("OAuth options:", { scopes: SPOTIFY_OAUTH_SCOPES, redirectTo });
 

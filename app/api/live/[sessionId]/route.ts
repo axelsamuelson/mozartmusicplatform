@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
 import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { createClient } from "@/lib/supabase/server";
 import { persistHostProviderToken } from "@/lib/live/getHostToken";
@@ -102,17 +103,27 @@ export async function PATCH(
   const hasHostDisconnected = body.host_disconnected_at !== undefined;
   const hasAdvanceLock = body.advance_lock_at !== undefined;
 
+  const advancedFieldsRequested =
+    hasJukebox ||
+    hasJams ||
+    hasWamPlayback ||
+    hasRankingMode ||
+    hasHideQueueNames ||
+    hasQueueMode ||
+    hasRankingVisibility ||
+    hasDuration ||
+    hasCoHost;
+
+  if (!isLiveAdvancedModesEnabled() && advancedFieldsRequested) {
+    return NextResponse.json(
+      { error: "Advanced session modes are disabled" },
+      { status: 403 },
+    );
+  }
+
   if (
     !hasAnonymous &&
-    !hasJukebox &&
-    !hasJams &&
-    !hasWamPlayback &&
-    !hasRankingMode &&
-    !hasHideQueueNames &&
-    !hasQueueMode &&
-    !hasRankingVisibility &&
-    !hasDuration &&
-    !hasCoHost &&
+    !advancedFieldsRequested &&
     !hasHostDisconnected &&
     !hasAdvanceLock
   ) {

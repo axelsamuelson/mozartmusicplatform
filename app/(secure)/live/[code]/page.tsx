@@ -25,7 +25,7 @@ import { ratingsForCurrentTrack } from "@/lib/live/filterRatingsForTrack";
 import { aggregateLiveRatings } from "@/lib/live/aggregateLiveRatings";
 import { MAX_QUEUE_TRACKS_PER_USER } from "@/lib/live/jukeboxPriority";
 import {
-  getLiveSessionMode,
+  getEffectiveLiveSessionMode,
   sessionHasQueue,
   sessionHasScores,
 } from "@/lib/live/sessionMode";
@@ -72,7 +72,7 @@ export default function LiveSessionPage() {
   const [bufferRefreshKey, setBufferRefreshKey] = useState(0);
   const advanceCooldownUntilRef = useRef(0);
 
-  const sessionMode = session ? getLiveSessionMode(session) : "legacy";
+  const sessionMode = session ? getEffectiveLiveSessionMode(session) : "legacy";
   const jams = sessionMode === "jams";
   const jukebox = sessionMode === "jukebox";
   const hasQueue = session ? sessionHasQueue(session) : false;
@@ -207,7 +207,7 @@ export default function LiveSessionPage() {
         if (sessionHasQueue(sess)) {
           await Promise.all([loadQueue(sess.id), loadScores(sess.id)]);
         }
-        if (getLiveSessionMode(sess) === "jams") {
+        if (getEffectiveLiveSessionMode(sess) === "jams") {
           const srcRes = await fetch(`/api/live/${sess.id}/source`);
           const srcBody = (await srcRes.json()) as { mine?: { source_type?: string } | null };
           setHasSource(Boolean(srcBody.mine && srcBody.mine.source_type !== "none"));

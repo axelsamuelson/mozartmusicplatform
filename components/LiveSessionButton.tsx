@@ -29,6 +29,7 @@ import { useLiveSessionChannel } from "@/lib/live/useLiveSessionChannel";
 import { useLiveSessionDisplayName } from "@/lib/live/useLiveSessionDisplayName";
 import { liveAvatarUrl } from "@/lib/live/userDisplay";
 import { createClient } from "@/lib/supabase/client";
+import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
 import { normalizeJukeboxRankingMode } from "@/lib/live/jukeboxRanking";
 import type { ActiveLiveSessionRef, JukeboxRankingMode, LiveSessionRow } from "@/lib/types/live";
 import { formatSessionCode } from "@/lib/utils/sessionCode";
@@ -72,6 +73,7 @@ function AnonymousModeToggle({
 }
 
 export function LiveSessionButton({ canStart, className }: LiveSessionButtonProps) {
+  const advancedModes = isLiveAdvancedModesEnabled();
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [active, setActive] = useState<ActiveLiveSessionRef | null>(null);
@@ -464,6 +466,8 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
                 {formattedCode}
               </p>
 
+              {advancedModes ? (
+              <>
               <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -554,6 +558,9 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
                 </div>
               ) : null}
 
+              </>
+              ) : null}
+
               <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -591,7 +598,7 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
                 <LiveNowPlaying session={session} className="!p-4" />
               ) : null}
 
-              {session?.jukebox_enabled || session?.jams_enabled ? (
+              {advancedModes && (session?.jukebox_enabled || session?.jams_enabled) ? (
                 <>
                   <ShareFromSpotifyPanel sessionCode={formattedCode} />
                   <Button
