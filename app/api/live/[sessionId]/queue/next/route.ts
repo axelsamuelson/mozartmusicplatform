@@ -5,7 +5,6 @@ import {
   loadPendingQueue,
   pickAndApplyNextTrack,
 } from "@/lib/live/jukeboxQueue";
-import { isLiveSessionFeaturesEnabled } from "@/lib/live/liveSessionFeatures";
 import {
   getEffectiveLiveSessionMode,
   sessionHasScores,
@@ -22,13 +21,6 @@ export async function POST(
   const { sessionId } = await context.params;
   if (!LIVE_SESSION_UUID_RE.test(sessionId)) {
     return NextResponse.json({ error: "Invalid session id" }, { status: 400 });
-  }
-
-  if (!isLiveSessionFeaturesEnabled()) {
-    return NextResponse.json(
-      { error: "Live queue is disabled" },
-      { status: 403 },
-    );
   }
 
   const supabase = await createClient();

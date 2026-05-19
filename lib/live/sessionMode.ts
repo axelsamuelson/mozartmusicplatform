@@ -1,5 +1,4 @@
 import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
-import { isLiveQueueEnabled } from "@/lib/live/liveSessionFeatures";
 import type { LiveSessionRow } from "@/lib/types/live";
 
 /** Effective mode after env gates (jams wins if both flags are set in DB). */
@@ -30,7 +29,7 @@ export function getEffectiveLiveSessionMode(
 ): LiveSessionMode {
   if (session.jams_enabled && isLiveAdvancedModesEnabled()) return "jams";
   if (session.jukebox_enabled && isLiveAdvancedModesEnabled()) return "jukebox";
-  if (session.jukebox_enabled && isLiveQueueEnabled()) return "queue";
+  if (session.jukebox_enabled && !isLiveAdvancedModesEnabled()) return "queue";
   return "legacy";
 }
 

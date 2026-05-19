@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 
 import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
-import { isLiveQueueEnabled } from "@/lib/live/liveSessionFeatures";
 import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
 import { createClient } from "@/lib/supabase/server";
 import { persistHostProviderToken } from "@/lib/live/getHostToken";
@@ -119,14 +118,6 @@ export async function PATCH(
       { error: "Advanced session modes are disabled" },
       { status: 403 },
     );
-  }
-
-  if (
-    !isLiveQueueEnabled() &&
-    !isLiveAdvancedModesEnabled() &&
-    queueFieldsRequested
-  ) {
-    return NextResponse.json({ error: "Live queue is disabled" }, { status: 403 });
   }
 
   const patchableFieldsRequested =
