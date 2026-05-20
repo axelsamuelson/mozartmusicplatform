@@ -27,6 +27,7 @@ import {
   type LiveQueueDisplayItem,
   sessionUsesHostPlaybackQueuePreview,
 } from "@/lib/live/liveQueueDisplay";
+import { invalidatePlaybackQueueDisplayCache } from "@/lib/live/queueDisplayCache";
 import {
   getEffectiveLiveSessionMode,
   sessionHasQueue,
@@ -273,6 +274,17 @@ export default function LiveSessionPage() {
     ? sessionUsesHostPlaybackQueuePreview(session)
     : false;
 
+  useEffect(() => {
+    if (!session?.id || !usesPlaybackQueuePreview || queue.length > 0) return;
+    void loadQueue(session.id);
+  }, [
+    session?.id,
+    session?.spotify_track_id,
+    usesPlaybackQueuePreview,
+    queue.length,
+    loadQueue,
+  ]);
+
   const {
     displayName,
     isAnonymous,
@@ -298,7 +310,12 @@ export default function LiveSessionPage() {
     onScoresChange: () => {
       if (session?.id && sessionHasScores(session)) void loadScores(session.id);
     },
-    onSessionUpdate: applySession,
+    onSessionUpdate: (next) => {
+      applySession(next);
+      if (sessionUsesHostPlaybackQueuePreview(next) && next.spotify_track_id) {
+        invalidatePlaybackQueueDisplayCache(next.id);
+      }
+    },
     onSessionEnded: handleSessionEnded,
     onBufferChange: () => setBufferRefreshKey((k) => k + 1),
   });

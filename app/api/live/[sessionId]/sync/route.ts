@@ -64,7 +64,7 @@ export async function PATCH(
 
   if (getEffectiveLiveSessionMode(session) === "queue") {
     const pending = await loadPendingQueue(supabase, sessionId);
-    if (pending.length > 0 || session.current_queue_id) {
+    if (pending.length > 0) {
       return NextResponse.json({ session, unchanged: true, syncSkipped: true });
     }
   }

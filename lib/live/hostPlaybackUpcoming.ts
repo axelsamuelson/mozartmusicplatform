@@ -2,7 +2,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { enrichTracksFromCacheAndSpotify } from "@/lib/live/enrichTrackMetadata";
 import { getHostToken } from "@/lib/live/getHostToken";
-import type { SpotifyQueuedTrack } from "@/lib/spotify/playerQueue";
+import {
+  fetchCurrentPlayback,
+  playlistIdFromContextUri,
+} from "@/lib/spotify/currentlyPlaying";
+import {
+  fetchSpotifyPlayerQueue,
+  type SpotifyQueuedTrack,
+} from "@/lib/spotify/playerQueue";
 import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import type { LiveSessionRow } from "@/lib/types/live";
 
@@ -43,7 +50,55 @@ function nextTrackIdsFromList(
   return nextIds;
 }
 
-/** Upcoming tracks from synced playlist_tracks (no /me/player calls). */
+async function upcomingFromPlaylistApi(
+  hostToken: string,
+  playlistId: string,
+  currentTrackId: string,
+  limit: number,
+  exclude: Set<string>,
+): Promise<string[]> {
+  if (isSpotifyCircuitOpen()) return [];
+
+  const fields = encodeURIComponent("items(track(id)),next");
+  let url: string | null =
+    `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/items?limit=50&fields=${fields}`;
+  const allIds: string[] = [];
+
+  for (let page = 0; page < 6 && url; page++) {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${hostToken}` },
+      cache: "no-store",
+    });
+    if (!res.ok) break;
+
+    const body = (await res.json()) as {
+      items?: { track?: { id?: string } | null }[];
+      next?: string | null;
+    };
+
+    for (const row of body.items ?? []) {
+      const id = row.track?.id;
+      if (typeof id === "string" && id.length > 0) allIds.push(id);
+    }
+
+    const currentIndex = allIds.indexOf(currentTrackId);
+    if (currentIndex >= 0 && allIds.length >= currentIndex + 1 + limit) break;
+
+    url = body.next ?? null;
+  }
+
+  const currentIndex = allIds.indexOf(currentTrackId);
+  const start = currentIndex >= 0 ? currentIndex + 1 : 0;
+  const nextIds: string[] = [];
+  for (let i = start; i < allIds.length && nextIds.length < limit; i++) {
+    const id = allIds[i]!;
+    if (exclude.has(id)) continue;
+    nextIds.push(id);
+    exclude.add(id);
+  }
+  return nextIds;
+}
+
 async function upcomingFromCachedPlaylists(
   admin: SupabaseClient,
   hostUserId: string,
@@ -63,12 +118,71 @@ async function upcomingFromCachedPlaylists(
       : [];
     if (trackIds.length === 0) continue;
     const nextIds = nextTrackIdsFromList(trackIds, currentTrackId, limit, exclude);
-    if (nextIds.length > 0) {
-      return nextIds;
-    }
+    if (nextIds.length > 0) return nextIds;
   }
 
   return [];
+}
+
+async function upcomingFromPlaylistContext(
+  admin: SupabaseClient,
+  session: LiveSessionRow,
+  hostToken: string | null,
+  contextUri: string | null,
+  currentTrackId: string,
+  limit: number,
+  exclude: Set<string>,
+): Promise<string[]> {
+  const playlistId = playlistIdFromContextUri(contextUri);
+  if (!playlistId) return [];
+
+  const { data: cached } = await admin
+    .from("playlist_tracks")
+    .select("track_ids")
+    .eq("user_id", session.host_user_id)
+    .eq("playlist_id", playlistId)
+    .maybeSingle();
+
+  const trackIds = Array.isArray(cached?.track_ids)
+    ? (cached.track_ids as string[]).filter((id) => typeof id === "string" && id.length > 0)
+    : [];
+
+  if (trackIds.length > 0) {
+    const nextIds = nextTrackIdsFromList(trackIds, currentTrackId, limit, exclude);
+    if (nextIds.length > 0) return nextIds;
+  }
+
+  if (!hostToken) return [];
+  return upcomingFromPlaylistApi(hostToken, playlistId, currentTrackId, limit, exclude);
+}
+
+async function tracksFromIds(
+  admin: SupabaseClient,
+  session: LiveSessionRow,
+  trackIds: string[],
+  hostToken: string | null,
+  currentTrackId: string | null,
+): Promise<SpotifyQueuedTrack[]> {
+  if (trackIds.length === 0) return [];
+
+  const meta = await enrichTracksFromCacheAndSpotify(admin, trackIds, hostToken);
+  const results: SpotifyQueuedTrack[] = [];
+
+  for (const id of trackIds) {
+    const m = meta.get(id);
+    if (!m) continue;
+    const track = toQueuedTrack(id, {
+      track_name:
+        m.track_name ?? (id === currentTrackId ? session.track_name : null),
+      artist_name:
+        m.artist_name ?? (id === currentTrackId ? session.artist_name : null),
+      image_url:
+        m.image_url ?? (id === currentTrackId ? session.image_url : null),
+    });
+    if (track) results.push(track);
+  }
+
+  return results;
 }
 
 export type FetchHostPlaybackUpcomingOptions = {
@@ -85,7 +199,7 @@ function logQueuePreview(message: string, detail?: unknown): void {
   }
 }
 
-async function resolveMetadataToken(
+async function resolveHostToken(
   admin: SupabaseClient,
   session: LiveSessionRow,
   options?: FetchHostPlaybackUpcomingOptions,
@@ -99,14 +213,14 @@ async function resolveMetadataToken(
   try {
     return await getHostToken(admin, session, options?.callerUserId);
   } catch (e) {
-    logQueuePreview("no token for track metadata", e instanceof Error ? e.message : e);
+    logQueuePreview("no host Spotify token", e instanceof Error ? e.message : e);
     return null;
   }
 }
 
 /**
- * Next tracks for empty guest queue.
- * Uses playlist_tracks + cached_items; one batched GET /tracks when metadata is missing.
+ * Upcoming host tracks when the guest queue is empty.
+ * Prefers synced playlist_tracks (no API), then Spotify device queue + playlist context.
  */
 export async function fetchHostPlaybackUpcoming(
   admin: SupabaseClient,
@@ -118,51 +232,94 @@ export async function fetchHostPlaybackUpcoming(
   if (limit <= 0) return [];
 
   const exclude = new Set(excludeTrackIds);
-  const currentTrackId = session.spotify_track_id?.trim() ?? null;
-  if (!currentTrackId) {
-    logQueuePreview("no session track id — sync host playback first");
-    return [];
-  }
-
-  const playlistTrackIds = await upcomingFromCachedPlaylists(
-    admin,
-    session.host_user_id,
-    currentTrackId,
-    limit,
-    exclude,
-  );
-
-  logQueuePreview(`cached playlist scan: ${playlistTrackIds.length} track(s)`, {
-    currentTrackId,
-  });
-
-  if (playlistTrackIds.length === 0) {
-    return [];
-  }
-
-  const metaToken = await resolveMetadataToken(admin, session, options);
-  const meta = await enrichTracksFromCacheAndSpotify(
-    admin,
-    playlistTrackIds,
-    metaToken,
-  );
-
   const results: SpotifyQueuedTrack[] = [];
-  for (const id of playlistTrackIds) {
-    const m = meta.get(id);
-    if (!m) continue;
-    const track = toQueuedTrack(id, {
-      track_name:
-        m.track_name ??
-        (id === currentTrackId ? session.track_name : null),
-      artist_name:
-        m.artist_name ??
-        (id === currentTrackId ? session.artist_name : null),
-      image_url:
-        m.image_url ?? (id === currentTrackId ? session.image_url : null),
-    });
-    if (track) results.push(track);
+  const hostToken = await resolveHostToken(admin, session, options);
+  const spotifyUserId = session.host_user_id;
+
+  let currentTrackId = session.spotify_track_id?.trim() ?? null;
+
+  if (!currentTrackId && hostToken && !isSpotifyCircuitOpen()) {
+    const playback = await fetchCurrentPlayback(hostToken, {
+      userId: spotifyUserId,
+    }).catch(() => null);
+    currentTrackId = playback?.trackId ?? null;
   }
 
+  if (currentTrackId) {
+    const cachedIds = await upcomingFromCachedPlaylists(
+      admin,
+      session.host_user_id,
+      currentTrackId,
+      limit,
+      exclude,
+    );
+    if (cachedIds.length > 0) {
+      const cachedTracks = await tracksFromIds(
+        admin,
+        session,
+        cachedIds,
+        hostToken,
+        currentTrackId,
+      );
+      for (const track of cachedTracks) {
+        if (results.length >= limit) break;
+        results.push(track);
+      }
+      logQueuePreview(`playlist_tracks cache: ${results.length} track(s)`);
+    }
+  }
+
+  if (results.length < limit && hostToken && !isSpotifyCircuitOpen()) {
+    try {
+      const deviceQueue = await fetchSpotifyPlayerQueue(hostToken);
+      logQueuePreview(`Spotify device queue: ${deviceQueue.length} track(s)`);
+      for (const track of deviceQueue) {
+        if (results.length >= limit) break;
+        if (exclude.has(track.spotify_track_id)) continue;
+        exclude.add(track.spotify_track_id);
+        results.push(track);
+      }
+    } catch (e) {
+      logQueuePreview(
+        "Spotify device queue failed",
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+
+  if (results.length < limit && currentTrackId && hostToken && !isSpotifyCircuitOpen()) {
+    const playback = await fetchCurrentPlayback(hostToken, {
+      userId: spotifyUserId,
+    }).catch((e) => {
+      logQueuePreview("current playback failed", e instanceof Error ? e.message : e);
+      return null;
+    });
+
+    const playlistTrackIds = await upcomingFromPlaylistContext(
+      admin,
+      session,
+      hostToken,
+      playback?.contextUri ?? null,
+      currentTrackId,
+      limit - results.length,
+      exclude,
+    );
+
+    if (playlistTrackIds.length > 0) {
+      const playlistTracks = await tracksFromIds(
+        admin,
+        session,
+        playlistTrackIds,
+        hostToken,
+        currentTrackId,
+      );
+      for (const track of playlistTracks) {
+        if (results.length >= limit) break;
+        results.push(track);
+      }
+    }
+  }
+
+  logQueuePreview(`resolved ${results.length} upcoming track(s)`);
   return results.slice(0, limit);
 }
