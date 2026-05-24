@@ -76,7 +76,7 @@ export default async function Home({ searchParams }: HomeProps) {
     },
     {
       title: "Tag",
-      description: "Capture genres, mood, and moments so your library stays searchable.",
+      description: "Capture genres, tempo, intensity, and moments so your library stays searchable.",
       icon: <IconTag />,
     },
     {

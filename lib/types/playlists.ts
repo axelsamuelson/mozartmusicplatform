@@ -5,9 +5,15 @@ export interface WamPlaylistRow {
   name: string;
   description: string | null;
   filter_genres: string[] | null;
+  /** @deprecated Legacy mood level filter */
   filter_mood_levels: number[] | null;
   filter_moments: string[] | null;
   filter_min_score: number;
+  filter_vibes: string[] | null;
+  filter_tempo_min: number | null;
+  filter_tempo_max: number | null;
+  filter_intensity_min: number | null;
+  filter_intensity_max: number | null;
   track_count: number;
   last_synced_at: string | null;
   created_at: string;

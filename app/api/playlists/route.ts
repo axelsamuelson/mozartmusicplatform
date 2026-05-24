@@ -17,10 +17,20 @@ type CreateBody = {
   name?: string;
   description?: string | null;
   filter_genres?: string[];
-  filter_mood_levels?: number[];
   filter_moments?: string[];
   filter_min_score?: number;
+  filter_vibes?: string[];
+  filter_tempo_min?: number | null;
+  filter_tempo_max?: number | null;
+  filter_intensity_min?: number | null;
+  filter_intensity_max?: number | null;
 };
+
+function clampScale1to10(n: unknown): number | null {
+  if (n == null) return null;
+  if (typeof n !== "number" || !Number.isFinite(n)) return null;
+  return Math.min(10, Math.max(1, Math.round(n)));
+}
 
 export async function GET() {
   const supabase = await createClient();
@@ -84,12 +94,16 @@ export async function POST(request: NextRequest) {
     const filter_genres = Array.isArray(body.filter_genres)
       ? body.filter_genres.filter((x): x is string => typeof x === "string")
       : [];
-    const filter_mood_levels = Array.isArray(body.filter_mood_levels)
-      ? body.filter_mood_levels.filter((x): x is number => typeof x === "number")
-      : [];
     const filter_moments = Array.isArray(body.filter_moments)
       ? body.filter_moments.filter((x): x is string => typeof x === "string")
       : [];
+    const filter_vibes = Array.isArray(body.filter_vibes)
+      ? body.filter_vibes.filter((x): x is string => typeof x === "string")
+      : [];
+    const filter_tempo_min = clampScale1to10(body.filter_tempo_min);
+    const filter_tempo_max = clampScale1to10(body.filter_tempo_max);
+    const filter_intensity_min = clampScale1to10(body.filter_intensity_min);
+    const filter_intensity_max = clampScale1to10(body.filter_intensity_max);
     const filter_min_score =
       typeof body.filter_min_score === "number" &&
       Number.isFinite(body.filter_min_score)
@@ -204,8 +218,16 @@ export async function POST(request: NextRequest) {
 
     const filters = {
       filter_genres: filter_genres.length ? filter_genres : null,
-      filter_mood_levels: filter_mood_levels.length ? filter_mood_levels : null,
       filter_moments: filter_moments.length ? filter_moments : null,
+      filter_vibes: filter_vibes.length ? filter_vibes : null,
+      filter_tempo_min:
+        filter_vibes.length === 0 ? filter_tempo_min : null,
+      filter_tempo_max:
+        filter_vibes.length === 0 ? filter_tempo_max : null,
+      filter_intensity_min:
+        filter_vibes.length === 0 ? filter_intensity_min : null,
+      filter_intensity_max:
+        filter_vibes.length === 0 ? filter_intensity_max : null,
       filter_min_score,
     };
 

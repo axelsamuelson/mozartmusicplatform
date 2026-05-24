@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
+import { ListMusic, RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { PlaylistFilterChips } from "@/components/PlaylistFilterChips";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { summarizePlaylistFilters } from "@/lib/playlist/filterSummary";
 import { glassCard } from "@/lib/wamUi";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
@@ -17,9 +18,33 @@ export interface PlaylistCardProps {
   onSynced?: (row: WamPlaylistRow) => void;
 }
 
+function syncStatus(lastSynced: string | null): {
+  label: string;
+  dotClass: string;
+} {
+  if (!lastSynced) {
+    return { label: "Not synced yet", dotClass: "bg-amber-400" };
+  }
+  const ageMs = Date.now() - new Date(lastSynced).getTime();
+  const day = 24 * 60 * 60 * 1000;
+  if (ageMs < day) {
+    return { label: "Synced recently", dotClass: "bg-emerald-400" };
+  }
+  return { label: "Sync recommended", dotClass: "bg-white/35" };
+}
+
 export function PlaylistCard({ playlist, onDeleted, onSynced }: PlaylistCardProps) {
   const [syncing, setSyncing] = useState(false);
   const [deleting, setDeleting] = useState(false);
+
+  const status = syncStatus(playlist.last_synced_at);
+  const last =
+    playlist.last_synced_at != null
+      ? new Date(playlist.last_synced_at).toLocaleString(undefined, {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : null;
 
   async function handleSync() {
     setSyncing(true);
@@ -61,59 +86,84 @@ export function PlaylistCard({ playlist, onDeleted, onSynced }: PlaylistCardProp
     }
   }
 
-  const last =
-    playlist.last_synced_at != null
-      ? new Date(playlist.last_synced_at).toLocaleString()
-      : "Never";
-
   return (
-    <Card
+    <article
       className={cn(
-        "flex flex-col gap-4 border-0 bg-transparent text-white shadow-none ring-0",
+        "group flex h-full flex-col gap-4 p-5 transition-all duration-300 hover:border-white/15",
         glassCard,
       )}
     >
-      <CardHeader className="space-y-1 px-0 pb-2 pt-0">
-        <CardTitle className="text-xl font-bold leading-tight text-white sm:text-2xl">
+      <div className="flex items-start gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-wam/25 bg-wam/10 text-wam">
+          <ListMusic className="size-5" strokeWidth={1.75} aria-hidden />
+        </div>
+        <div className="min-w-0 flex-1">
           <Link
             href={`/playlists/${playlist.id}`}
-            className="transition-colors duration-300 hover:text-wam"
+            className="block truncate text-lg font-semibold leading-tight text-white transition-colors hover:text-wam"
           >
             {playlist.name}
           </Link>
-        </CardTitle>
-        <p className="text-xs leading-relaxed text-white/60">{summarizePlaylistFilters(playlist)}</p>
-      </CardHeader>
-      <CardContent className="flex flex-1 flex-col gap-2 px-0 text-sm text-white/65">
-        <p>
-          <span className="font-semibold text-white">{playlist.track_count}</span> tracks
-        </p>
-        <p className="text-xs text-white/50">Last synced: {last}</p>
-      </CardContent>
-      <CardFooter className="mt-auto flex flex-wrap gap-2 border-t border-white/[0.08] bg-white/[0.03] px-0 pb-0 pt-4">
+          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/45">
+            {summarizePlaylistFilters(playlist)}
+          </p>
+        </div>
+      </div>
+
+      <PlaylistFilterChips playlist={playlist} />
+
+      <div className="flex items-end justify-between gap-3 border-t border-white/[0.06] pt-3">
+        <div>
+          <p className="text-2xl font-bold tabular-nums text-white">
+            {playlist.track_count}
+            <span className="ml-1.5 text-sm font-normal text-white/45">tracks</span>
+          </p>
+          <p className="mt-1 flex items-center gap-1.5 text-[11px] text-white/40">
+            <span
+              className={cn("size-1.5 shrink-0 rounded-full", status.dotClass)}
+              aria-hidden
+            />
+            {status.label}
+            {last ? <span className="text-white/30">· {last}</span> : null}
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-auto flex flex-wrap gap-2">
         <Button
           type="button"
           size="sm"
           onClick={handleSync}
           disabled={syncing || deleting}
-          className="rounded-full border border-white/20 bg-white/10 px-5 text-white transition-all duration-300 hover:scale-105 hover:bg-white/20 hover:shadow-md"
+          className="rounded-full bg-wam px-4 text-sm font-medium text-black hover:bg-wam/90"
         >
+          <RefreshCw
+            className={cn("mr-1.5 size-3.5", syncing && "animate-spin")}
+            aria-hidden
+          />
           {syncing ? "Syncing…" : "Sync"}
         </Button>
         <Button
           type="button"
           size="sm"
-          variant="destructive"
-          onClick={handleDelete}
-          disabled={syncing || deleting}
-          className="rounded-full"
+          variant="outline"
+          asChild
+          className="rounded-full border-white/20 bg-transparent text-white hover:bg-white/10"
         >
-          {deleting ? "Deleting…" : "Delete"}
-        </Button>
-        <Button type="button" size="sm" variant="outline" asChild className="rounded-full border-white/25 bg-transparent text-white hover:bg-white/10 hover:text-white">
           <Link href={`/playlists/${playlist.id}`}>Details</Link>
         </Button>
-      </CardFooter>
-    </Card>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={handleDelete}
+          disabled={syncing || deleting}
+          className="ml-auto rounded-full text-white/40 hover:bg-red-500/10 hover:text-red-400"
+          aria-label="Delete playlist"
+        >
+          <Trash2 className="size-4" />
+        </Button>
+      </div>
+    </article>
   );
 }

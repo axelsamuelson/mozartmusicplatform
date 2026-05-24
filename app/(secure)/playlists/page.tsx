@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ListMusic, Plus, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -20,20 +21,21 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import type {
-  GenreTagRow,
-  MomentTagRow,
-  MoodTagRow,
-} from "@/lib/types/ratings";
-import type { WamPlaylistRow } from "@/lib/types/playlists";
 import { capRetryAfterSec } from "@/lib/spotify/errors";
-import { glassCardTight, pageHeading, pageSub } from "@/lib/wamUi";
+import type { GenreTagRow, MomentTagRow } from "@/lib/types/ratings";
+import type { WamPlaylistRow } from "@/lib/types/playlists";
+import { glassCard, glassCardTight } from "@/lib/wamUi";
+import { cn } from "@/lib/utils";
 
 const emptyFilters = (): PlaylistFiltersState => ({
   filter_genres: [],
-  filter_mood_levels: [],
   filter_moments: [],
   filter_min_score: 0,
+  filter_vibes: [],
+  filter_tempo_min: null,
+  filter_tempo_max: null,
+  filter_intensity_min: null,
+  filter_intensity_max: null,
 });
 
 function sleep(ms: number): Promise<void> {
@@ -43,7 +45,6 @@ function sleep(ms: number): Promise<void> {
 export default function PlaylistsPage() {
   const [playlists, setPlaylists] = useState<WamPlaylistRow[]>([]);
   const [genreTags, setGenreTags] = useState<GenreTagRow[]>([]);
-  const [moodTags, setMoodTags] = useState<MoodTagRow[]>([]);
   const [momentTags, setMomentTags] = useState<MomentTagRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +53,12 @@ export default function PlaylistsPage() {
   const [filters, setFilters] = useState<PlaylistFiltersState>(emptyFilters);
   const [creating, setCreating] = useState(false);
   const createInFlightRef = useRef(false);
+
+  const stats = useMemo(() => {
+    const totalTracks = playlists.reduce((n, p) => n + p.track_count, 0);
+    const synced = playlists.filter((p) => p.last_synced_at).length;
+    return { totalTracks, synced };
+  }, [playlists]);
 
   function loadAll() {
     setLoading(true);
@@ -65,7 +72,6 @@ export default function PlaylistsPage() {
       fetch("/api/tags").then(async (r) => {
         const b = (await r.json()) as {
           genre_tags?: GenreTagRow[];
-          mood_tags?: MoodTagRow[];
           moment_tags?: MomentTagRow[];
           error?: string;
         };
@@ -76,7 +82,6 @@ export default function PlaylistsPage() {
       .then(([pl, tags]) => {
         setPlaylists(pl);
         setGenreTags(tags.genre_tags ?? []);
-        setMoodTags(tags.mood_tags ?? []);
         setMomentTags(tags.moment_tags ?? []);
       })
       .catch((e: unknown) => {
@@ -102,10 +107,12 @@ export default function PlaylistsPage() {
       body: JSON.stringify({
         name: playlistName,
         filter_genres: filters.filter_genres.length ? filters.filter_genres : undefined,
-        filter_mood_levels: filters.filter_mood_levels.length
-          ? filters.filter_mood_levels
-          : undefined,
         filter_moments: filters.filter_moments.length ? filters.filter_moments : undefined,
+        filter_vibes: filters.filter_vibes.length ? filters.filter_vibes : undefined,
+        filter_tempo_min: filters.filter_tempo_min,
+        filter_tempo_max: filters.filter_tempo_max,
+        filter_intensity_min: filters.filter_intensity_min,
+        filter_intensity_max: filters.filter_intensity_max,
         filter_min_score: filters.filter_min_score,
       }),
       signal,
@@ -188,73 +195,119 @@ export default function PlaylistsPage() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-10 px-4 pb-16 pt-24 md:px-6">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 pb-20 pt-24 md:px-6">
       <PlaylistsSubnav />
 
-      <div className="flex justify-between items-start gap-4">
-        <div className="min-w-0 flex-1">
-          <h1 className={pageHeading}>Playlists</h1>
-          <p className={pageSub}>
-            WAM-owned Spotify playlists synced from your ratings and filters.
-          </p>
-        </div>
-        <Dialog open={open} onOpenChange={setOpen}>
-          <DialogTrigger asChild>
-            <Button
-              type="button"
-              className="inline-flex shrink-0 rounded-full bg-wam px-5 py-2 text-sm font-medium text-black transition-all hover:bg-wam/90 focus-visible:ring-0"
-            >
-              New playlist
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-h-[90vh] overflow-y-auto border-white/10 bg-[oklch(0.08_0_0)]/95 text-white backdrop-blur-xl sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle>New playlist</DialogTitle>
-            </DialogHeader>
-            <div className="flex flex-col gap-4 py-2">
-              <div className="flex flex-col gap-2">
-                <label htmlFor="pl-name" className="text-sm font-medium text-white/80">
-                  Name
-                </label>
-                <Input
-                  id="pl-name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. High-energy 80+"
+      <header
+        className={cn(
+          "relative overflow-hidden rounded-2xl border border-white/10 p-6 md:p-8",
+          "bg-gradient-to-br from-wam/12 via-white/[0.03] to-purple-500/8",
+        )}
+      >
+        <div
+          className="pointer-events-none absolute -right-8 -top-8 size-40 rounded-full bg-wam/10 blur-3xl"
+          aria-hidden
+        />
+        <div className="relative flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+          <div className="max-w-xl space-y-2">
+            <div className="flex items-center gap-2 text-wam">
+              <ListMusic className="size-5" aria-hidden />
+              <span className="text-xs font-medium uppercase tracking-widest">
+                WAM Playlists
+              </span>
+            </div>
+            <h1 className="text-3xl font-bold tracking-tight text-white md:text-4xl">
+              Playlists from your ratings
+            </h1>
+            <p className="text-sm leading-relaxed text-white/55 md:text-base">
+              Build dynamic Spotify playlists filtered by score, tempo, intensity,
+              genres, and moments. WAM-owned only — sync whenever your library changes.
+            </p>
+          </div>
+          <Dialog open={open} onOpenChange={setOpen}>
+            <DialogTrigger asChild>
+              <Button
+                type="button"
+                className="inline-flex shrink-0 rounded-full bg-wam px-5 py-2.5 text-sm font-semibold text-black shadow-lg shadow-wam/20 transition-all hover:bg-wam/90"
+              >
+                <Plus className="mr-1.5 size-4" aria-hidden />
+                New playlist
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-h-[90vh] overflow-y-auto border-white/10 bg-[oklch(0.08_0_0)]/95 text-white backdrop-blur-xl sm:max-w-xl">
+              <DialogHeader>
+                <DialogTitle>Create playlist</DialogTitle>
+                <p className="text-sm text-white/50">
+                  Filters apply to your rated tracks. Sync pushes matches to Spotify.
+                </p>
+              </DialogHeader>
+              <div className="flex flex-col gap-5 py-2">
+                <div className="flex flex-col gap-2">
+                  <label htmlFor="pl-name" className="text-sm font-medium text-white/80">
+                    Name
+                  </label>
+                  <Input
+                    id="pl-name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. High-energy 80+"
+                    disabled={creating}
+                    className="border-white/15 bg-white/5 text-white placeholder:text-white/40"
+                  />
+                </div>
+                <PlaylistBuilder
+                  genreTags={genreTags}
+                  momentTags={momentTags}
+                  value={filters}
+                  onChange={setFilters}
                   disabled={creating}
-                  className="border-white/15 bg-white/5 text-white placeholder:text-white/40"
                 />
               </div>
-              <PlaylistBuilder
-                genreTags={genreTags}
-                moodTags={moodTags}
-                momentTags={momentTags}
-                value={filters}
-                onChange={setFilters}
-                disabled={creating}
-              />
-            </div>
-            <DialogFooter>
-              <Button
-                type="button"
-                variant="outline"
-                onClick={() => setOpen(false)}
-                className="rounded-full border-white/25 bg-transparent text-white hover:bg-white/10 hover:text-white"
-              >
-                Cancel
-              </Button>
-              <Button
-                type="button"
-                onClick={handleCreate}
-                disabled={creating}
-                className="rounded-full bg-white px-6 text-black hover:bg-gray-50"
-              >
-                {creating ? "Creating…" : "Create"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+              <DialogFooter className="gap-2 sm:gap-0">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setOpen(false)}
+                  className="rounded-full border-white/25 bg-transparent text-white hover:bg-white/10"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  onClick={handleCreate}
+                  disabled={creating}
+                  className="rounded-full bg-wam px-6 font-semibold text-black hover:bg-wam/90"
+                >
+                  {creating ? "Creating…" : "Create on Spotify"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </header>
+
+      {!loading && playlists.length > 0 ? (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <div className={cn("px-4 py-3", glassCardTight)}>
+            <p className="text-2xl font-bold tabular-nums text-white">
+              {playlists.length}
+            </p>
+            <p className="text-xs text-white/45">Playlists</p>
+          </div>
+          <div className={cn("px-4 py-3", glassCardTight)}>
+            <p className="text-2xl font-bold tabular-nums text-white">
+              {stats.totalTracks}
+            </p>
+            <p className="text-xs text-white/45">Tracks on Spotify</p>
+          </div>
+          <div className={cn("col-span-2 px-4 py-3 sm:col-span-1", glassCardTight)}>
+            <p className="text-2xl font-bold tabular-nums text-white">
+              {stats.synced}/{playlists.length}
+            </p>
+            <p className="text-xs text-white/45">Synced at least once</p>
+          </div>
+        </div>
+      ) : null}
 
       {error ? (
         <p className="text-sm text-red-400" role="alert">
@@ -263,14 +316,38 @@ export default function PlaylistsPage() {
       ) : null}
 
       {loading ? (
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Skeleton className={`h-48 ${glassCardTight}`} />
-          <Skeleton className={`h-48 ${glassCardTight}`} />
+        <div className="grid gap-4 md:grid-cols-2">
+          <Skeleton className={cn("h-52", glassCardTight)} />
+          <Skeleton className={cn("h-52", glassCardTight)} />
         </div>
       ) : playlists.length === 0 ? (
-        <p className="text-sm text-white/60">No playlists yet. Create one to get started.</p>
+        <div
+          className={cn(
+            "flex flex-col items-center gap-4 px-6 py-14 text-center",
+            glassCard,
+          )}
+        >
+          <div className="flex size-14 items-center justify-center rounded-2xl border border-wam/25 bg-wam/10 text-wam">
+            <Sparkles className="size-7" strokeWidth={1.5} aria-hidden />
+          </div>
+          <div className="max-w-sm space-y-2">
+            <h2 className="text-lg font-semibold text-white">No playlists yet</h2>
+            <p className="text-sm leading-relaxed text-white/50">
+              Create a playlist with vibe filters like Chill or High Energy, set a
+              minimum score, and sync matching tracks to Spotify.
+            </p>
+          </div>
+          <Button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="rounded-full bg-wam px-6 font-semibold text-black hover:bg-wam/90"
+          >
+            <Plus className="mr-1.5 size-4" aria-hidden />
+            Create your first playlist
+          </Button>
+        </div>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2">
           {playlists.map((p) => (
             <PlaylistCard
               key={p.id}

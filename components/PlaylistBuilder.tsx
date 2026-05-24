@@ -1,12 +1,14 @@
 "use client";
 
+import { useState } from "react";
+
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import { VIBE_PRESETS } from "@/lib/playlist/tempoIntensityPresets";
 import type {
   GenreTagRow,
   MomentSubcategory,
   MomentTagRow,
-  MoodTagRow,
 } from "@/lib/types/ratings";
 import { sectionHeading } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
@@ -19,14 +21,17 @@ const MOMENT_GROUPS: { key: MomentSubcategory; label: string }[] = [
 
 export interface PlaylistFiltersState {
   filter_genres: string[];
-  filter_mood_levels: number[];
   filter_moments: string[];
   filter_min_score: number;
+  filter_vibes: string[];
+  filter_tempo_min: number | null;
+  filter_tempo_max: number | null;
+  filter_intensity_min: number | null;
+  filter_intensity_max: number | null;
 }
 
 export interface PlaylistBuilderProps {
   genreTags: GenreTagRow[];
-  moodTags: MoodTagRow[];
   momentTags: MomentTagRow[];
   value: PlaylistFiltersState;
   onChange: (next: PlaylistFiltersState) => void;
@@ -38,23 +43,195 @@ function toggleString(arr: string[], v: string): string[] {
   return arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v];
 }
 
-function toggleLevel(arr: number[], level: number): number[] {
-  return arr.includes(level) ? arr.filter((x) => x !== level) : [...arr, level];
+function RangeRow({
+  label,
+  min,
+  max,
+  onMinChange,
+  onMaxChange,
+  disabled,
+}: {
+  label: string;
+  min: number | null;
+  max: number | null;
+  onMinChange: (v: number | null) => void;
+  onMaxChange: (v: number | null) => void;
+  disabled?: boolean;
+}) {
+  const minVal = min ?? 1;
+  const maxVal = max ?? 10;
+  const active = min != null || max != null;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium uppercase tracking-wider text-white/50">
+          {label}
+        </span>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (active) {
+              onMinChange(null);
+              onMaxChange(null);
+            } else {
+              onMinChange(1);
+              onMaxChange(10);
+            }
+          }}
+          className={cn(
+            "text-[10px] font-medium uppercase tracking-wide transition-colors",
+            active ? "text-wam" : "text-white/40 hover:text-white/60",
+          )}
+        >
+          {active ? "Clear" : "Any"}
+        </button>
+      </div>
+      {active ? (
+        <>
+          <div className="flex items-center justify-between text-xs text-white/50">
+            <span>Min {minVal}</span>
+            <span>Max {maxVal}</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="mb-1 text-[10px] text-white/40">Minimum</p>
+              <Slider
+                min={1}
+                max={10}
+                step={1}
+                disabled={disabled}
+                value={[minVal]}
+                onValueChange={([v]) => {
+                  const next = v ?? 1;
+                  onMinChange(next);
+                  if (max != null && next > max) onMaxChange(next);
+                }}
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] text-white/40">Maximum</p>
+              <Slider
+                min={1}
+                max={10}
+                step={1}
+                disabled={disabled}
+                value={[maxVal]}
+                onValueChange={([v]) => {
+                  const next = v ?? 10;
+                  onMaxChange(next);
+                  if (min != null && next < min) onMinChange(next);
+                }}
+              />
+            </div>
+          </div>
+        </>
+      ) : (
+        <p className="text-[11px] text-white/40">No {label.toLowerCase()} limit</p>
+      )}
+    </div>
+  );
 }
 
 export function PlaylistBuilder({
   genreTags,
-  moodTags,
   momentTags,
   value,
   onChange,
   disabled,
   className,
 }: PlaylistBuilderProps) {
-  const sortedMoods = [...moodTags].sort((a, b) => a.level - b.level);
+  const [showCustomRange, setShowCustomRange] = useState(
+    Boolean(
+      value.filter_tempo_min != null ||
+        value.filter_tempo_max != null ||
+        value.filter_intensity_min != null ||
+        value.filter_intensity_max != null,
+    ),
+  );
+
+  function selectVibe(id: string) {
+    onChange({
+      ...value,
+      filter_vibes: toggleString(value.filter_vibes, id),
+      filter_tempo_min: null,
+      filter_tempo_max: null,
+      filter_intensity_min: null,
+      filter_intensity_max: null,
+    });
+    setShowCustomRange(false);
+  }
+
+  function updateCustom(patch: Partial<PlaylistFiltersState>) {
+    onChange({
+      ...value,
+      ...patch,
+      filter_vibes: [],
+    });
+    setShowCustomRange(true);
+  }
 
   return (
     <div className={cn("flex flex-col gap-8", className)}>
+      <section className="flex flex-col gap-2">
+        <h3 className={sectionHeading}>Vibe</h3>
+        <p className="text-xs leading-relaxed text-white/55">
+          Match tracks by tempo and intensity. Select one or more vibes (OR). Tracks
+          without tempo/intensity ratings are excluded when a vibe filter is active.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {VIBE_PRESETS.map((preset) => {
+            const on = value.filter_vibes.includes(preset.id);
+            return (
+              <button
+                key={preset.id}
+                type="button"
+                disabled={disabled}
+                onClick={() => selectVibe(preset.id)}
+                className={cn(
+                  "rounded-full border px-3 py-1.5 text-xs font-medium transition-all duration-200",
+                  on
+                    ? preset.pillClass
+                    : "border-white/15 bg-white/5 text-white/50 hover:border-white/25 hover:text-white/80",
+                  disabled && "pointer-events-none opacity-50",
+                )}
+              >
+                {preset.label}
+              </button>
+            );
+          })}
+        </div>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setShowCustomRange((v) => !v)}
+          className="w-fit text-xs text-white/45 underline-offset-2 hover:text-wam hover:underline"
+        >
+          {showCustomRange ? "Hide custom ranges" : "Fine-tune with custom ranges"}
+        </button>
+        {showCustomRange ? (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <RangeRow
+              label="Tempo"
+              min={value.filter_tempo_min}
+              max={value.filter_tempo_max}
+              disabled={disabled}
+              onMinChange={(v) => updateCustom({ filter_tempo_min: v })}
+              onMaxChange={(v) => updateCustom({ filter_tempo_max: v })}
+            />
+            <RangeRow
+              label="Intensity"
+              min={value.filter_intensity_min}
+              max={value.filter_intensity_max}
+              disabled={disabled}
+              onMinChange={(v) => updateCustom({ filter_intensity_min: v })}
+              onMaxChange={(v) => updateCustom({ filter_intensity_max: v })}
+            />
+          </div>
+        ) : null}
+      </section>
+
       <section className="flex flex-col gap-2">
         <h3 className={sectionHeading}>Genres</h3>
         <p className="text-xs leading-relaxed text-white/55">
@@ -90,57 +267,6 @@ export function PlaylistBuilder({
                   {g.name}
                 </button>
               </Badge>
-            );
-          })}
-        </div>
-      </section>
-
-      <section className="flex flex-col gap-2">
-        <h3 className={sectionHeading}>Mood levels</h3>
-        <p className="text-xs leading-relaxed text-white/55">
-          Multi-select. If none are selected, any mood matches.
-        </p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-5">
-          {sortedMoods.map((m) => {
-            const active = value.filter_mood_levels.includes(m.level);
-            return (
-              <button
-                key={m.id}
-                type="button"
-                disabled={disabled}
-                onClick={() =>
-                  onChange({
-                    ...value,
-                    filter_mood_levels: toggleLevel(value.filter_mood_levels, m.level),
-                  })
-                }
-                className={cn(
-                  "flex flex-col items-start gap-0.5 rounded-xl border px-3 py-2.5 text-left text-sm font-medium transition-all duration-300",
-                  active
-                    ? "border-white/[0.12] bg-white/[0.07] ring-2 ring-white/25 ring-offset-2 ring-offset-[oklch(0.05_0_0)]"
-                    : "border-white/[0.08] bg-white/[0.04] hover:border-white/[0.12] hover:bg-white/[0.07]",
-                )}
-                style={
-                  active
-                    ? {
-                        borderColor: m.color,
-                        boxShadow: `0 0 0 2px ${m.color}40`,
-                      }
-                    : undefined
-                }
-              >
-                <span
-                  className="text-xs font-semibold tracking-wide uppercase"
-                  style={{ color: m.color }}
-                >
-                  {m.name}
-                </span>
-                {m.description ? (
-                  <span className="text-[11px] leading-snug text-white/55">
-                    {m.description}
-                  </span>
-                ) : null}
-              </button>
             );
           })}
         </div>

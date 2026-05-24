@@ -170,7 +170,7 @@ console.log("Cookie names sent:", collectedCookies.map((c) => c.name).join(", ")
 const payload = {
   name: "Test playlist",
   filter_genres: [],
-  filter_mood_levels: [],
+  filter_vibes: ["high_energy"],
   filter_moments: [],
   filter_min_score: 0,
 };

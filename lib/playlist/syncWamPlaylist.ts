@@ -19,6 +19,11 @@ function filtersFromRow(pl: WamPlaylistRow): WamPlaylistFilters {
     filter_mood_levels: pl.filter_mood_levels,
     filter_moments: pl.filter_moments,
     filter_min_score: pl.filter_min_score,
+    filter_vibes: pl.filter_vibes ?? null,
+    filter_tempo_min: pl.filter_tempo_min ?? null,
+    filter_tempo_max: pl.filter_tempo_max ?? null,
+    filter_intensity_min: pl.filter_intensity_min ?? null,
+    filter_intensity_max: pl.filter_intensity_max ?? null,
   };
 }
 
