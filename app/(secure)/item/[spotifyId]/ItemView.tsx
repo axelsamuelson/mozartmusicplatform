@@ -210,7 +210,6 @@ export function ItemView() {
               <RatingForm
                 spotifyId={item.spotify_id}
                 genreTags={genreTags}
-                moodTags={moodTags}
                 momentTags={momentTags}
                 initialRating={rating}
                 onSaved={handleSaved}

@@ -7,6 +7,7 @@ import { Disc3, Play } from "lucide-react";
 import { toast } from "sonner";
 
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
+import { TempoIntensityPills } from "@/components/TempoIntensityPills";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,8 +52,6 @@ export function RatingCard({ rating, className, onRatingUpdated }: RatingCardPro
 
   const genres = rating.genres;
   const moments = rating.moments;
-  const mood = rating.mood;
-
   const genreShown = genres.slice(0, 3);
   const genreExtra = genres.length - genreShown.length;
   const momentShown = moments.slice(0, 2);
@@ -102,16 +101,7 @@ export function RatingCard({ rating, className, onRatingUpdated }: RatingCardPro
             >
               {rating.score}
             </span>
-            {mood ? (
-              <span className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-white/15 bg-white/10 px-2 py-0.5 text-xs text-white/90">
-                <span
-                  className="size-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: mood.color }}
-                  aria-hidden
-                />
-                <span className="truncate">{mood.name}</span>
-              </span>
-            ) : null}
+            <TempoIntensityPills tempo={rating.tempo} intensity={rating.intensity} />
           </div>
 
           {genreShown.length ? (

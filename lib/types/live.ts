@@ -49,6 +49,9 @@ export type LiveRatingRow = {
   display_name: string | null;
   spotify_track_id?: string | null;
   score: number;
+  tempo?: number | null;
+  intensity?: number | null;
+  /** @deprecated */
   mood_tag_id: number | null;
   genre_ids: number[];
   comment: string | null;

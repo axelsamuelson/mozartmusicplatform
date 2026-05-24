@@ -3,17 +3,14 @@
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { MoodScaleSlider } from "@/components/MoodScaleSlider";
 import { ScoreSlider } from "@/components/ScoreSlider";
 import { TagPicker } from "@/components/TagPicker";
 import { Button } from "@/components/ui/button";
 import type {
   GenreTagRow,
   MomentTagRow,
-  MoodTagRow,
   RatingDetail,
 } from "@/lib/types/ratings";
-import { moodSliderFromDbLevel, moodTagIdFromScale } from "@/lib/moodScale";
 import { dispatchRatingsMutated } from "@/lib/wamRatingEvents";
 import { glassPanel, sectionHeading } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
@@ -21,25 +18,21 @@ import { cn } from "@/lib/utils";
 export interface RatingFormProps {
   spotifyId: string;
   genreTags: GenreTagRow[];
-  moodTags: MoodTagRow[];
   momentTags: MomentTagRow[];
   initialRating: RatingDetail | null;
   onSaved: (rating: RatingDetail) => void;
   onDeleted?: () => void;
   className?: string;
-  /** `dialog`: compact tags / score, no outer glass panel, WAM-styled actions. */
   presentation?: "page" | "dialog";
 }
 
 function stateFromRating(r: RatingDetail | null) {
-  const moodOn = Boolean(r?.mood);
-  const moodLevel = r?.mood ? moodSliderFromDbLevel(r.mood.level) : 5;
   return {
     score: r?.score ?? 50,
     comment: r?.comment ?? "",
     genreIds: r?.genres.map((g) => g.id) ?? [],
-    moodOn,
-    moodLevel,
+    tempo: r?.tempo ?? null,
+    intensity: r?.intensity ?? null,
     momentIds: r?.moments.map((m) => m.id) ?? [],
   };
 }
@@ -47,7 +40,6 @@ function stateFromRating(r: RatingDetail | null) {
 export function RatingForm({
   spotifyId,
   genreTags,
-  moodTags,
   momentTags,
   initialRating,
   onSaved,
@@ -59,8 +51,8 @@ export function RatingForm({
   const [score, setScore] = useState(50);
   const [comment, setComment] = useState("");
   const [genreIds, setGenreIds] = useState<number[]>([]);
-  const [moodOn, setMoodOn] = useState(false);
-  const [moodLevel, setMoodLevel] = useState(5);
+  const [tempo, setTempo] = useState<number | null>(null);
+  const [intensity, setIntensity] = useState<number | null>(null);
   const [momentIds, setMomentIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -70,18 +62,13 @@ export function RatingForm({
     setScore(s.score);
     setComment(s.comment);
     setGenreIds(s.genreIds);
-    setMoodOn(s.moodOn);
-    setMoodLevel(s.moodLevel);
+    setTempo(s.tempo);
+    setIntensity(s.intensity);
     setMomentIds(s.momentIds);
   }, [initialRating]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-
-    let moodTagId: number | null = null;
-    if (moodOn) {
-      moodTagId = moodTagIdFromScale(moodTags, moodLevel);
-    }
 
     setSaving(true);
     try {
@@ -93,7 +80,8 @@ export function RatingForm({
           score,
           comment: comment.trim() || null,
           genre_ids: genreIds,
-          ...(moodTagId != null ? { mood_tag_id: moodTagId } : {}),
+          tempo,
+          intensity,
           moment_ids: momentIds,
         }),
       });
@@ -156,18 +144,6 @@ export function RatingForm({
         variant={isDialog ? "dialog" : "default"}
       />
 
-      <MoodScaleSlider
-        enabled={moodOn}
-        level={moodLevel}
-        onEnabledChange={(on) => {
-          setMoodOn(on);
-          if (on) setMoodLevel((lv) => (lv < 1 || lv > 10 ? 5 : lv));
-        }}
-        onLevelChange={setMoodLevel}
-        disabled={saving || deleting}
-        variant={isDialog ? "dialog" : "default"}
-      />
-
       <TagPicker
         genreTags={genreTags}
         momentTags={momentTags}
@@ -175,6 +151,12 @@ export function RatingForm({
         selectedMomentIds={momentIds}
         onGenresChange={setGenreIds}
         onMomentsChange={setMomentIds}
+        tempo={tempo}
+        intensity={intensity}
+        onTempoIntensityChange={(t, i) => {
+          setTempo(t);
+          setIntensity(i);
+        }}
         disabled={saving || deleting}
         visualVariant={isDialog ? "dialog" : "default"}
       />

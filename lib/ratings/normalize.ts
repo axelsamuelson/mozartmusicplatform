@@ -13,6 +13,8 @@ export const RATING_SELECT = `
   spotify_id,
   score,
   comment,
+  tempo,
+  intensity,
   created_at,
   updated_at,
   cached_items (
@@ -99,6 +101,17 @@ export function normalizeRating(row: Record<string, unknown>): RatingDetail {
     .map((x) => x.moment_tags)
     .filter((m): m is MomentTagRow => Boolean(m));
 
+  const tempoRaw = row.tempo;
+  const intensityRaw = row.intensity;
+  const tempo =
+    typeof tempoRaw === "number" && tempoRaw >= 1 && tempoRaw <= 10
+      ? tempoRaw
+      : null;
+  const intensity =
+    typeof intensityRaw === "number" && intensityRaw >= 1 && intensityRaw <= 10
+      ? intensityRaw
+      : null;
+
   return {
     id: row.id as string,
     spotify_id: row.spotify_id as string,
@@ -106,6 +119,8 @@ export function normalizeRating(row: Record<string, unknown>): RatingDetail {
     comment: (row.comment as string | null) ?? null,
     created_at: row.created_at as string,
     updated_at: row.updated_at as string,
+    tempo,
+    intensity,
     genres,
     mood,
     moments,

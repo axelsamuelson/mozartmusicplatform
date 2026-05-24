@@ -39,7 +39,10 @@ export interface RatingDetail {
   comment: string | null;
   created_at: string;
   updated_at: string;
+  tempo: number | null;
+  intensity: number | null;
   genres: GenreTagRow[];
+  /** @deprecated Legacy mood tag — use tempo/intensity for new ratings. */
   mood: MoodTagRow | null;
   moments: MomentTagRow[];
   item: CachedItemSummary | null;

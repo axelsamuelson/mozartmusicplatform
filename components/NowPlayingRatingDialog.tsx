@@ -1,11 +1,12 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { X } from "lucide-react";
 
 import { scoreReadoutClass } from "@/components/ScoreSlider";
+import { TagPicker } from "@/components/TagPicker";
 import {
   Dialog,
   DialogClose,
@@ -19,9 +20,7 @@ import type { ItemType } from "@/lib/spotify/api";
 import { dispatchRatingsMutated } from "@/lib/wamRatingEvents";
 import type {
   GenreTagRow,
-  MomentSubcategory,
   MomentTagRow,
-  MoodTagRow,
   RatingDetail,
 } from "@/lib/types/ratings";
 import { cn } from "@/lib/utils";
@@ -34,29 +33,13 @@ type CachedRow = {
   image_url: string | null;
 };
 
-const MOMENT_GROUPS: { key: MomentSubcategory; label: string }[] = [
-  { key: "place", label: "PLACE" },
-  { key: "occasion", label: "OCCASION" },
-  { key: "activity", label: "ACTIVITY" },
-];
-
-function toggleId(ids: number[], id: number): number[] {
-  if (ids.includes(id)) return ids.filter((x) => x !== id);
-  return [...ids, id];
-}
-
-function hexToRgba(hex: string, alpha: number): string {
-  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
-  if (!m) return `rgba(255,255,255,${alpha})`;
-  return `rgba(${Number.parseInt(m[1]!, 16)},${Number.parseInt(m[2]!, 16)},${Number.parseInt(m[3]!, 16)},${alpha})`;
-}
-
 function stateFromRating(r: RatingDetail | null) {
   return {
     score: r?.score ?? 50,
     comment: r?.comment ?? "",
     genreIds: r?.genres.map((g) => g.id) ?? [],
-    moodTagId: r?.mood?.id ?? null,
+    tempo: r?.tempo ?? null,
+    intensity: r?.intensity ?? null,
     momentIds: r?.moments.map((m) => m.id) ?? [],
   };
 }
@@ -83,7 +66,6 @@ export function NowPlayingRatingDialog({
   onRatingUpdated,
 }: NowPlayingRatingDialogProps) {
   const [genreTags, setGenreTags] = useState<GenreTagRow[]>([]);
-  const [moodTags, setMoodTags] = useState<MoodTagRow[]>([]);
   const [momentTags, setMomentTags] = useState<MomentTagRow[]>([]);
   const [item, setItem] = useState<CachedRow | null>(null);
   const [rating, setRating] = useState<RatingDetail | null>(null);
@@ -93,15 +75,11 @@ export function NowPlayingRatingDialog({
   const [score, setScore] = useState(50);
   const [comment, setComment] = useState("");
   const [genreIds, setGenreIds] = useState<number[]>([]);
-  const [moodTagId, setMoodTagId] = useState<number | null>(null);
+  const [tempo, setTempo] = useState<number | null>(null);
+  const [intensity, setIntensity] = useState<number | null>(null);
   const [momentIds, setMomentIds] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
-
-  const sortedMoods = useMemo(
-    () => [...moodTags].sort((a, b) => a.level - b.level),
-    [moodTags],
-  );
 
   useEffect(() => {
     if (!open || !spotifyId) return;
@@ -129,12 +107,10 @@ export function NowPlayingRatingDialog({
         const tagsBody = (await tagsRes.json().catch(() => ({}))) as {
           error?: string;
           genre_tags?: GenreTagRow[];
-          mood_tags?: MoodTagRow[];
           moment_tags?: MomentTagRow[];
         };
         if (!tagsRes.ok) throw new Error(tagsBody.error ?? "Failed to load tags");
         setGenreTags(tagsBody.genre_tags ?? []);
-        setMoodTags(tagsBody.mood_tags ?? []);
         setMomentTags(tagsBody.moment_tags ?? []);
 
         const itemBody = (await itemRes.json().catch(() => ({}))) as {
@@ -169,7 +145,8 @@ export function NowPlayingRatingDialog({
     setScore(s.score);
     setComment(s.comment);
     setGenreIds(s.genreIds);
-    setMoodTagId(s.moodTagId);
+    setTempo(s.tempo);
+    setIntensity(s.intensity);
     setMomentIds(s.momentIds);
   }, [open, rating]);
 
@@ -190,9 +167,10 @@ export function NowPlayingRatingDialog({
           spotify_id: spotifyId,
           score,
           comment: comment.trim() || null,
+          tempo,
+          intensity,
           genre_ids: genreIds,
           moment_ids: momentIds,
-          ...(moodTagId != null ? { mood_tag_id: moodTagId } : {}),
         }),
       });
       const body = (await res.json().catch(() => ({}))) as {
@@ -238,10 +216,6 @@ export function NowPlayingRatingDialog({
     }
   }
 
-  function toggleMood(id: number) {
-    setMoodTagId((prev) => (prev === id ? null : id));
-  }
-
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
@@ -255,7 +229,7 @@ export function NowPlayingRatingDialog({
       >
         <DialogTitle className="sr-only">Rate in WAM</DialogTitle>
         <DialogDescription className="sr-only">
-          Score, mood, genres, moments, and optional comment for this track.
+          Score, tempo, intensity, genres, moments, and optional comment for this track.
         </DialogDescription>
 
         <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden max-md:h-full md:h-auto">
@@ -343,109 +317,22 @@ export function NowPlayingRatingDialog({
                       />
                     </section>
 
-                    {sortedMoods.length > 0 ? (
-                      <section>
-                        <p className="mb-2 text-xs uppercase tracking-wider text-white/40">
-                          Mood
-                        </p>
-                        <div className="flex flex-wrap gap-2">
-                          {sortedMoods.map((m) => {
-                            const selected = moodTagId === m.id;
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                disabled={saving || deleting}
-                                onClick={() => toggleMood(m.id)}
-                                className={cn(
-                                  "rounded-full px-3 py-1.5 text-xs font-medium transition-colors",
-                                  selected
-                                    ? "border"
-                                    : "border border-white/10 text-white/40 hover:border-white/25 hover:text-white/70",
-                                  (saving || deleting) && "pointer-events-none opacity-50",
-                                )}
-                                style={
-                                  selected
-                                    ? {
-                                        borderColor: m.color,
-                                        backgroundColor: hexToRgba(m.color, 0.2),
-                                        color: m.color,
-                                      }
-                                    : undefined
-                                }
-                              >
-                                {m.name}
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </section>
-                    ) : null}
-
-                    <section>
-                      <p className="mb-2 text-xs uppercase tracking-wider text-white/40">
-                        Genre
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {genreTags.map((g) => {
-                          const on = genreIds.includes(g.id);
-                          return (
-                            <button
-                              key={g.id}
-                              type="button"
-                              disabled={saving || deleting}
-                              onClick={() => setGenreIds((prev) => toggleId(prev, g.id))}
-                              className={cn(
-                                "rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                                on
-                                  ? "border border-wam bg-wam/10 text-wam"
-                                  : "border border-white/10 text-white/50 hover:border-white/25 hover:text-white/70",
-                                (saving || deleting) && "pointer-events-none opacity-50",
-                              )}
-                            >
-                              {g.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </section>
-
-                    <section>
-                      {MOMENT_GROUPS.map(({ key, label }, i) => {
-                        const tags = momentTags.filter((t) => t.subcategory === key);
-                        return (
-                          <div key={key} className={cn(i < MOMENT_GROUPS.length - 1 && "mb-3")}>
-                            <p className="mb-1.5 text-[10px] uppercase tracking-widest text-white/30">
-                              {label}
-                            </p>
-                            <div className="flex flex-wrap gap-2">
-                              {tags.map((t) => {
-                                const on = momentIds.includes(t.id);
-                                return (
-                                  <button
-                                    key={t.id}
-                                    type="button"
-                                    disabled={saving || deleting}
-                                    onClick={() =>
-                                      setMomentIds((prev) => toggleId(prev, t.id))
-                                    }
-                                    className={cn(
-                                      "rounded-full px-3 py-1 text-xs font-medium transition-colors",
-                                      on
-                                        ? "border border-wam bg-wam/10 text-wam"
-                                        : "border border-white/10 text-white/50 hover:border-white/25 hover:text-white/70",
-                                      (saving || deleting) && "pointer-events-none opacity-50",
-                                    )}
-                                  >
-                                    {t.name}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </section>
+                    <TagPicker
+                      genreTags={genreTags}
+                      momentTags={momentTags}
+                      selectedGenreIds={genreIds}
+                      selectedMomentIds={momentIds}
+                      onGenresChange={setGenreIds}
+                      onMomentsChange={setMomentIds}
+                      tempo={tempo}
+                      intensity={intensity}
+                      onTempoIntensityChange={(t, i) => {
+                        setTempo(t);
+                        setIntensity(i);
+                      }}
+                      disabled={saving || deleting}
+                      visualVariant="dialog"
+                    />
 
                     <section>
                       <label htmlFor="now-playing-rating-comment" className="sr-only">

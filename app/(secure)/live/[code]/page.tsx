@@ -12,6 +12,7 @@ import { SessionTimer } from "@/components/live/SessionTimer";
 import { LiveNowPlaying } from "@/components/LiveNowPlaying";
 import { LiveParticipants } from "@/components/LiveParticipants";
 import { LiveRatingForm } from "@/components/LiveRatingForm";
+import { TempoIntensityPills } from "@/components/TempoIntensityPills";
 import { scoreBadgeClass, scoreReadoutClass } from "@/components/ScoreSlider";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -45,7 +46,7 @@ import type {
   LiveSessionAggregate,
   LiveSessionRow,
 } from "@/lib/types/live";
-import type { GenreTagRow, MoodTagRow } from "@/lib/types/ratings";
+import type { GenreTagRow, MomentTagRow, MoodTagRow } from "@/lib/types/ratings";
 import { normalizeSessionCode } from "@/lib/utils/sessionCode";
 import { glassCard, pageHeading, pageSub } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
@@ -68,6 +69,7 @@ export default function LiveSessionPage() {
   const [myQueueCount, setMyQueueCount] = useState(0);
   const [genreTags, setGenreTags] = useState<GenreTagRow[]>([]);
   const [moodTags, setMoodTags] = useState<MoodTagRow[]>([]);
+  const [momentTags, setMomentTags] = useState<MomentTagRow[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -239,6 +241,7 @@ export default function LiveSessionPage() {
         const body = (await res.json()) as {
           genre_tags?: GenreTagRow[];
           mood_tags?: MoodTagRow[];
+          moment_tags?: MomentTagRow[];
         };
         return body;
       }),
@@ -251,6 +254,7 @@ export default function LiveSessionPage() {
         }
         setGenreTags(tags.genre_tags ?? []);
         setMoodTags(tags.mood_tags ?? []);
+        setMomentTags(tags.moment_tags ?? []);
         await loadRatings(sess.id);
         if (sessionHasQueue(sess)) {
           await Promise.all([loadQueue(sess.id), loadScores(sess.id)]);
@@ -326,8 +330,10 @@ export default function LiveSessionPage() {
 
   async function handleSubmit(payload: {
     score: number;
-    mood_tag_id: number | null;
+    tempo: number | null;
+    intensity: number | null;
     genre_ids: number[];
+    moment_ids: number[];
     comment: string | null;
   }) {
     if (!session || isTrackOwner) return;
@@ -524,7 +530,7 @@ export default function LiveSessionPage() {
           allRatings={allRatings}
           aggregate={displayAggregate}
           genreTags={genreTags}
-          moodTags={moodTags}
+          momentTags={momentTags}
           ratedCount={ratedCount}
           onlineCount={onlineCount}
           canControlPlayback={canControlPlayback}
@@ -605,7 +611,7 @@ export default function LiveSessionPage() {
               <h2 className="mb-4 text-center text-sm font-medium text-white">Your rating</h2>
               <LiveRatingForm
                 genreTags={genreTags}
-                moodTags={moodTags}
+                momentTags={momentTags}
                 disabled={submitting}
                 submitting={submitting}
                 onSubmit={handleSubmit}
@@ -741,14 +747,7 @@ function RatingHeader({ rating }: { rating: LiveRatingRow }) {
       >
         {rating.score}
       </span>
-      {rating.mood ? (
-        <span
-          className="rounded-full px-2 py-0.5 text-[10px] font-medium text-black"
-          style={{ backgroundColor: rating.mood.color }}
-        >
-          {rating.mood.name}
-        </span>
-      ) : null}
+      <TempoIntensityPills tempo={rating.tempo} intensity={rating.intensity} />
     </div>
   );
 }

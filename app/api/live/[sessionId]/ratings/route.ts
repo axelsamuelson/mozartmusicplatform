@@ -9,6 +9,7 @@ import { LIVE_SESSION_UUID_RE, loadActiveSession } from "@/lib/live/loadActiveSe
 import { loadLiveRatingsForSession } from "@/lib/live/loadLiveRatings";
 import { persistLiveRatingToLibrary } from "@/lib/live/persistLiveRating";
 import { resolveLiveDisplayName } from "@/lib/live/resolveLiveDisplayName";
+import { parseOptionalScale1to10 } from "@/lib/ratings/parseScale";
 import { createClient } from "@/lib/supabase/server";
 import type { MoodTagRow } from "@/lib/types/ratings";
 
@@ -60,8 +61,12 @@ export async function GET(
 
 type PostBody = {
   score?: number;
+  tempo?: number | null;
+  intensity?: number | null;
+  /** @deprecated */
   mood_tag_id?: number | null;
   genre_ids?: number[];
+  moment_ids?: number[];
   comment?: string | null;
   spotify_track_id?: string;
   is_retroactive?: boolean;
@@ -101,15 +106,22 @@ export async function POST(
     );
   }
 
-  const mood_tag_id =
-    body.mood_tag_id === undefined || body.mood_tag_id === null
-      ? null
-      : typeof body.mood_tag_id === "number" && Number.isInteger(body.mood_tag_id)
-        ? body.mood_tag_id
-        : null;
+  let tempo: number | null | undefined;
+  let intensity: number | null | undefined;
+  try {
+    tempo = parseOptionalScale1to10(body.tempo, "tempo");
+    intensity = parseOptionalScale1to10(body.intensity, "intensity");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Invalid tempo/intensity";
+    return NextResponse.json({ error: msg }, { status: 400 });
+  }
 
   const genre_ids = Array.isArray(body.genre_ids)
     ? body.genre_ids.filter((id): id is number => Number.isInteger(id))
+    : [];
+
+  const moment_ids = Array.isArray(body.moment_ids)
+    ? body.moment_ids.filter((id): id is number => Number.isInteger(id))
     : [];
 
   const comment =
@@ -170,7 +182,8 @@ export async function POST(
         spotify_track_id: trackId,
         display_name,
         score,
-        mood_tag_id,
+        tempo: tempo ?? null,
+        intensity: intensity ?? null,
         genre_ids,
         comment: comment === "" ? null : comment,
         submitted_at: new Date().toISOString(),
@@ -178,7 +191,7 @@ export async function POST(
       { onConflict: "session_id,user_id,spotify_track_id" },
     )
     .select(
-      "id, session_id, user_id, spotify_track_id, display_name, score, mood_tag_id, genre_ids, comment, submitted_at",
+      "id, session_id, user_id, spotify_track_id, display_name, score, tempo, intensity, genre_ids, comment, submitted_at",
     )
     .single();
 
@@ -195,7 +208,8 @@ export async function POST(
       user_id: user.id,
       spotify_track_id: trackId,
       score,
-      mood_tag_id,
+      tempo: tempo ?? null,
+      intensity: intensity ?? null,
       is_retroactive: isRetroactive,
       rating_time_ms:
         typeof body.rating_time_ms === "number" ? body.rating_time_ms : null,
@@ -209,7 +223,15 @@ export async function POST(
         supabase,
         user.id,
         session,
-        { score, mood_tag_id, genre_ids, comment, display_name },
+        {
+          score,
+          tempo: tempo ?? null,
+          intensity: intensity ?? null,
+          genre_ids,
+          moment_ids,
+          comment,
+          display_name,
+        },
         { previousScore: prior?.score as number | undefined },
       );
     } catch (e) {

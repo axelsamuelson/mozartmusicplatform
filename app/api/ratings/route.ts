@@ -3,6 +3,7 @@ import { type NextRequest, NextResponse } from "next/server";
 
 import { syncWamPlaylistsForRating } from "@/lib/playlist/syncWamPlaylist";
 import { createClient } from "@/lib/supabase/server";
+import { parseOptionalScale1to10 } from "@/lib/ratings/parseScale";
 import {
   fetchRatingById,
   normalizeRating,
@@ -138,6 +139,9 @@ type PostBody = {
   score?: number;
   comment?: string | null;
   genre_ids?: number[];
+  tempo?: number | null;
+  intensity?: number | null;
+  /** @deprecated */
   mood_tag_id?: number;
   moment_ids?: number[];
 };
@@ -172,13 +176,14 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const rawMood = body.mood_tag_id;
-  let mood_tag_id: number | null = null;
-  if (rawMood !== undefined && rawMood !== null) {
-    if (typeof rawMood !== "number" || !Number.isInteger(rawMood)) {
-      return NextResponse.json({ error: "mood_tag_id must be an integer" }, { status: 400 });
-    }
-    mood_tag_id = rawMood;
+  let tempo: number | null | undefined;
+  let intensity: number | null | undefined;
+  try {
+    tempo = parseOptionalScale1to10(body.tempo, "tempo");
+    intensity = parseOptionalScale1to10(body.intensity, "intensity");
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Invalid tempo/intensity";
+    return NextResponse.json({ error: msg }, { status: 400 });
   }
 
   const genre_ids = Array.isArray(body.genre_ids)
@@ -224,12 +229,16 @@ export async function POST(request: NextRequest) {
     ratingId = existing.id;
     const prior = await fetchRatingById(supabase, ratingId);
     previousScore = prior?.score;
+    const updatePayload: Record<string, unknown> = {
+      score,
+      comment: comment === "" ? null : comment,
+    };
+    if (tempo !== undefined) updatePayload.tempo = tempo;
+    if (intensity !== undefined) updatePayload.intensity = intensity;
+
     const { error: upErr } = await supabase
       .from("ratings")
-      .update({
-        score,
-        comment: comment === "" ? null : comment,
-      })
+      .update(updatePayload)
       .eq("id", ratingId)
       .eq("user_id", user.id);
 
@@ -244,6 +253,8 @@ export async function POST(request: NextRequest) {
         spotify_id,
         score,
         comment: comment === "" ? null : comment,
+        tempo: tempo ?? null,
+        intensity: intensity ?? null,
       })
       .select("id")
       .single();
@@ -271,24 +282,6 @@ export async function POST(request: NextRequest) {
     );
     if (insG) {
       return NextResponse.json({ error: insG.message }, { status: 500 });
-    }
-  }
-
-  const { error: delMood } = await supabase
-    .from("rating_moods")
-    .delete()
-    .eq("rating_id", ratingId);
-  if (delMood) {
-    return NextResponse.json({ error: delMood.message }, { status: 500 });
-  }
-
-  if (mood_tag_id != null) {
-    const { error: insMood } = await supabase.from("rating_moods").insert({
-      rating_id: ratingId,
-      mood_tag_id,
-    });
-    if (insMood) {
-      return NextResponse.json({ error: insMood.message }, { status: 500 });
     }
   }
 

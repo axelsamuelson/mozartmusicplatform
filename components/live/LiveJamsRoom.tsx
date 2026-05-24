@@ -19,7 +19,7 @@ import type {
   LiveSessionAggregate,
   LiveSessionRow,
 } from "@/lib/types/live";
-import type { GenreTagRow, MoodTagRow } from "@/lib/types/ratings";
+import type { GenreTagRow, MomentTagRow } from "@/lib/types/ratings";
 import { glassCard } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 
@@ -35,7 +35,7 @@ export type LiveJamsRoomProps = {
   allRatings: LiveRatingRow[];
   aggregate: LiveSessionAggregate | null;
   genreTags: GenreTagRow[];
-  moodTags: MoodTagRow[];
+  momentTags: MomentTagRow[];
   ratedCount: number;
   onlineCount: number;
   canControlPlayback: boolean;
@@ -47,8 +47,10 @@ export type LiveJamsRoomProps = {
   onEndSession: () => void;
   onSubmitRating: (payload: {
     score: number;
-    mood_tag_id: number | null;
+    tempo: number | null;
+    intensity: number | null;
     genre_ids: number[];
+    moment_ids: number[];
     comment: string | null;
   }) => void;
   onRefresh: () => void;
@@ -65,7 +67,7 @@ export function LiveJamsRoom({
   allRatings,
   aggregate,
   genreTags,
-  moodTags,
+  momentTags,
   ratedCount,
   onlineCount,
   canControlPlayback,
@@ -120,7 +122,7 @@ export function LiveJamsRoom({
         <h2 className="mb-4 text-center text-sm font-medium text-white">Your rating</h2>
         <LiveRatingForm
           genreTags={genreTags}
-          moodTags={moodTags}
+          momentTags={momentTags}
           disabled={submitting}
           submitting={submitting}
           onSubmit={onSubmitRating}

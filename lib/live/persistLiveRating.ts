@@ -6,8 +6,10 @@ import type { LiveSessionRow } from "@/lib/types/live";
 
 export type PersistLiveRatingInput = {
   score: number;
-  mood_tag_id: number | null;
+  tempo: number | null;
+  intensity: number | null;
   genre_ids: number[];
+  moment_ids: number[];
   comment: string | null;
   display_name: string;
 };
@@ -55,6 +57,8 @@ export async function persistLiveRatingToLibrary(
       .update({
         score: input.score,
         comment: input.comment === "" ? null : input.comment,
+        tempo: input.tempo,
+        intensity: input.intensity,
       })
       .eq("id", ratingId);
   } else {
@@ -65,6 +69,8 @@ export async function persistLiveRatingToLibrary(
         spotify_id: spotifyId,
         score: input.score,
         comment: input.comment === "" ? null : input.comment,
+        tempo: input.tempo,
+        intensity: input.intensity,
       })
       .select("id")
       .single();
@@ -79,12 +85,11 @@ export async function persistLiveRatingToLibrary(
     );
   }
 
-  await supabase.from("rating_moods").delete().eq("rating_id", ratingId);
-  if (input.mood_tag_id != null) {
-    await supabase.from("rating_moods").insert({
-      rating_id: ratingId,
-      mood_tag_id: input.mood_tag_id,
-    });
+  await supabase.from("rating_moments").delete().eq("rating_id", ratingId);
+  if (input.moment_ids.length) {
+    await supabase.from("rating_moments").insert(
+      input.moment_ids.map((moment_tag_id) => ({ rating_id: ratingId, moment_tag_id })),
+    );
   }
 
   const full = await fetchRatingById(supabase, ratingId);

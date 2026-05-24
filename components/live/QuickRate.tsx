@@ -4,6 +4,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 
 import { ScoreSlider } from "@/components/ScoreSlider";
+import { TempoIntensitySlider } from "@/components/TempoIntensitySlider";
 import { Button } from "@/components/ui/button";
 import type { LiveSessionRow } from "@/lib/types/live";
 import { glassCard } from "@/lib/wamUi";
@@ -36,6 +37,8 @@ export function QuickRate({
   onSubmitted,
 }: QuickRateProps) {
   const [score, setScore] = useState(50);
+  const [tempo, setTempo] = useState<number | null>(null);
+  const [intensity, setIntensity] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [retroOpen, setRetroOpen] = useState(false);
 
@@ -54,6 +57,8 @@ export function QuickRate({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           score,
+          tempo,
+          intensity,
           spotify_track_id: tid,
           is_retroactive: retroactive,
           rating_time_ms: ratingTimeMs,
@@ -94,6 +99,18 @@ export function QuickRate({
       ) : (
         <>
           <ScoreSlider value={score} onChange={setScore} />
+          <div className="mt-4">
+            <TempoIntensitySlider
+              tempo={tempo}
+              intensity={intensity}
+              onChange={(t, i) => {
+                setTempo(t);
+                setIntensity(i);
+              }}
+              disabled={submitting}
+              variant="compact"
+            />
+          </div>
           <Button
             type="button"
             disabled={submitting}
@@ -119,14 +136,25 @@ export function QuickRate({
         <div className="mt-3 rounded-lg border border-white/10 bg-white/5 p-3">
           <p className="mb-2 text-xs text-white/50">Previous: {previousTrack.name}</p>
           <ScoreSlider value={score} onChange={setScore} />
+          <div className="mt-3">
+            <TempoIntensitySlider
+              tempo={tempo}
+              intensity={intensity}
+              onChange={(t, i) => {
+                setTempo(t);
+                setIntensity(i);
+              }}
+              disabled={submitting}
+              variant="compact"
+            />
+          </div>
           <Button
             type="button"
-            size="sm"
-            className="mt-2 w-full bg-wam/20 text-wam"
             disabled={submitting}
+            className="mt-3 w-full rounded-full bg-wam text-sm font-semibold text-black hover:bg-wam/90"
             onClick={() => void submit(true, previousTrack.id)}
           >
-            Submit retroactive
+            {submitting ? "Submitting…" : "Rate previous track"}
           </Button>
         </div>
       ) : null}

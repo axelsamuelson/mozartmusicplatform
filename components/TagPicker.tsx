@@ -1,6 +1,13 @@
 "use client";
 
+import { useMemo } from "react";
+
+import { TempoIntensitySlider } from "@/components/TempoIntensitySlider";
 import { Badge } from "@/components/ui/badge";
+import {
+  getTopSuggestions,
+  sortMomentTagsWithSuggestions,
+} from "@/lib/ratings/tagSuggestions";
 import type {
   GenreTagRow,
   MomentSubcategory,
@@ -22,10 +29,13 @@ export interface TagPickerProps {
   selectedMomentIds: number[];
   onGenresChange: (ids: number[]) => void;
   onMomentsChange: (ids: number[]) => void;
+  tempo: number | null;
+  intensity: number | null;
+  onTempoIntensityChange: (tempo: number, intensity: number) => void;
   disabled?: boolean;
   className?: string;
-  /** Dialog: tighter badges, no helper blurbs. */
   visualVariant?: "default" | "dialog";
+  showTempoIntensity?: boolean;
 }
 
 function toggleId(ids: number[], id: number): number[] {
@@ -40,14 +50,33 @@ export function TagPicker({
   selectedMomentIds,
   onGenresChange,
   onMomentsChange,
+  tempo,
+  intensity,
+  onTempoIntensityChange,
   disabled,
   className,
   visualVariant = "default",
+  showTempoIntensity = true,
 }: TagPickerProps) {
   const isDialog = visualVariant === "dialog";
 
+  const suggestions = useMemo(() => {
+    if (tempo == null || intensity == null) return [];
+    return getTopSuggestions(tempo, intensity);
+  }, [tempo, intensity]);
+
   return (
     <div className={cn("flex flex-col", isDialog ? "gap-6" : "gap-8", className)}>
+      {showTempoIntensity ? (
+        <TempoIntensitySlider
+          tempo={tempo}
+          intensity={intensity}
+          onChange={onTempoIntensityChange}
+          disabled={disabled}
+          variant={isDialog ? "dialog" : "default"}
+        />
+      ) : null}
+
       <section className="flex flex-col gap-2">
         <h3 className={isDialog ? "text-sm text-white/60" : sectionHeading}>Genre</h3>
         {!isDialog ? (
@@ -103,6 +132,7 @@ export function TagPicker({
         ) : null}
         {MOMENT_GROUPS.map(({ key, label }) => {
           const tags = momentTags.filter((t) => t.subcategory === key);
+          const sorted = sortMomentTagsWithSuggestions(tags, suggestions);
           return (
             <div key={key} className="flex flex-col gap-2">
               <h4
@@ -116,7 +146,7 @@ export function TagPicker({
                 {label}
               </h4>
               <div className={cn("flex flex-wrap", isDialog ? "gap-2" : "gap-1.5")}>
-                {tags.map((t) => {
+                {sorted.map(({ tag: t, suggested }) => {
                   const on = selectedMomentIds.includes(t.id);
                   return (
                     <Badge
@@ -130,13 +160,17 @@ export function TagPicker({
                               "border px-3 py-1 text-xs",
                               on
                                 ? "border-wam bg-wam/10 text-wam hover:bg-wam/15"
-                                : "border-white/15 text-white/60 hover:border-white/30 hover:text-white",
+                                : suggested
+                                  ? "border-wam/40 bg-wam/10 text-wam/70 hover:border-wam/50"
+                                  : "border-white/15 text-white/60 hover:border-white/30 hover:text-white",
                             )
                           : cn(
                               "border px-2.5 py-1 text-xs transition-all duration-200 hover:scale-[1.02]",
                               on
                                 ? "border-transparent bg-white/90 text-black hover:bg-white"
-                                : "border-white/20 bg-white/5 text-white/85 hover:border-white/30 hover:bg-white/10",
+                                : suggested
+                                  ? "border-wam/40 bg-wam/10 text-wam/80 hover:border-wam/50"
+                                  : "border-white/20 bg-white/5 text-white/85 hover:border-white/30 hover:bg-white/10",
                             ),
                         disabled && "pointer-events-none opacity-50",
                       )}
@@ -147,8 +181,14 @@ export function TagPicker({
                         onClick={() =>
                           onMomentsChange(toggleId(selectedMomentIds, t.id))
                         }
+                        className="inline-flex items-center gap-1"
                       >
                         {t.name}
+                        {suggested && !on ? (
+                          <span className="rounded-full border border-wam/40 bg-wam/10 px-1 py-px text-[10px] font-normal uppercase tracking-wide text-wam/70">
+                            Suggested
+                          </span>
+                        ) : null}
                       </button>
                     </Badge>
                   );
