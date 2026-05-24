@@ -22,8 +22,10 @@ const PLAYBACK_POLLING_DISABLED =
   process.env.NEXT_PUBLIC_DISABLE_PLAYBACK_POLLING === "true";
 
 const IDLE_API_MS = 60_000;
-/** Single early check for external-device skip (was 12s + 25s). */
-const EARLY_SKIP_MS = [20_000] as const;
+const ACTIVE_POLL_CAP_MS = 3_000;
+/** Early polls to detect external-device track changes. */
+const EARLY_SKIP_MS = [2_000, 6_000, 15_000] as const;
+const TRANSPORT_POLL_DELAYS_MS = [500, 1_500, 3_000] as const;
 
 function isSdkPrimary(state: PlaybackState | null): boolean {
   return state?.source === "sdk" && Boolean(state.trackId);
@@ -37,6 +39,7 @@ export type UnifiedPlaybackControls = {
   refreshAfterTransport: () => Promise<void>;
   clearTimers: () => void;
   scheduleApiFetch: (state: PlaybackState | null) => void;
+  scheduleTransportPolls: () => void;
 };
 
 export function useUnifiedPlayback(options: {
@@ -44,17 +47,23 @@ export function useUnifiedPlayback(options: {
   playbackReady: boolean;
   skipApiPoll: boolean;
   enabled: boolean;
+  /** Fired when playback track id changes (host live sync, etc.). */
+  onTrackChanged?: () => void;
 }): UnifiedPlaybackControls {
-  const { hasToken, playbackReady, skipApiPoll, enabled } = options;
+  const { hasToken, playbackReady, skipApiPoll, enabled, onTrackChanged } = options;
   const isUserActive = useUserActivity();
+  const onTrackChangedRef = useRef(onTrackChanged);
+  onTrackChangedRef.current = onTrackChanged;
 
   const [playback, setPlayback] = useState<PlaybackState | null>(null);
   const [displayProgressMs, setDisplayProgressMs] = useState(0);
   const playbackRef = useRef<PlaybackState | null>(null);
+  const prevTrackIdRef = useRef<string | null>(null);
   const isLeaderRef = useRef(true);
   const tabVisibleRef = useRef(true);
   const fetchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const earlySkipTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+  const transportPollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const trackStartedAtRef = useRef(0);
 
   useEffect(() => {
@@ -73,16 +82,26 @@ export function useUnifiedPlayback(options: {
     earlySkipTimersRef.current = [];
   }, []);
 
+  const clearTransportPollTimers = useCallback(() => {
+    for (const id of transportPollTimersRef.current) clearTimeout(id);
+    transportPollTimersRef.current = [];
+  }, []);
+
   const clearTimers = useCallback(() => {
     clearFetchTimer();
     clearEarlySkipTimers();
-  }, [clearEarlySkipTimers, clearFetchTimer]);
+    clearTransportPollTimers();
+  }, [clearEarlySkipTimers, clearFetchTimer, clearTransportPollTimers]);
 
   const applyPlayback = useCallback(
     (next: PlaybackState, opts?: { broadcast?: boolean }) => {
       const prev = playbackRef.current;
       if (prev?.trackId !== next.trackId) {
         trackStartedAtRef.current = Date.now();
+      }
+      if (next.trackId !== prevTrackIdRef.current) {
+        prevTrackIdRef.current = next.trackId;
+        onTrackChangedRef.current?.();
       }
       playbackRef.current = next;
       setPlayback(next);
@@ -118,7 +137,10 @@ export function useUnifiedPlayback(options: {
 
       const currentProgress = getCurrentProgressMs(state);
       const remainingMs = state.durationMs - currentProgress;
-      const triggerIn = Math.min(Math.max(remainingMs - 500, 1_000), 60_000);
+      const triggerIn = Math.min(
+        Math.max(remainingMs - 500, 1_000),
+        ACTIVE_POLL_CAP_MS,
+      );
       fetchTimerRef.current = setTimeout(() => {
         void fetchApiPlaybackRef.current();
       }, triggerIn);
@@ -218,6 +240,16 @@ export function useUnifiedPlayback(options: {
 
   fetchApiPlaybackRef.current = fetchApiPlayback;
 
+  const scheduleTransportPolls = useCallback(() => {
+    clearTransportPollTimers();
+    for (const delay of TRANSPORT_POLL_DELAYS_MS) {
+      const id = setTimeout(() => {
+        void fetchApiPlaybackRef.current();
+      }, delay);
+      transportPollTimersRef.current.push(id);
+    }
+  }, [clearTransportPollTimers]);
+
   const applySdkState = useCallback(
     (state: Parameters<typeof sdkStateToPlayback>[0]) => {
       const mapped = sdkStateToPlayback(state);
@@ -269,6 +301,10 @@ export function useUnifiedPlayback(options: {
       playbackRef.current = remote;
       setPlayback(remote);
       setDisplayProgressMs(getCurrentProgressMs(remote));
+      if (remote.trackId !== prevTrackIdRef.current) {
+        prevTrackIdRef.current = remote.trackId;
+        onTrackChangedRef.current?.();
+      }
       if (remote.source === "api" && isLeaderRef.current) {
         scheduleApiFetch(remote);
       }
@@ -329,21 +365,17 @@ export function useUnifiedPlayback(options: {
     scheduleEarlySkipChecks,
   ]);
 
-  // Progress RAF (250ms)
+  // Progress RAF (every frame)
   useEffect(() => {
     if (!playback) {
       setDisplayProgressMs(0);
       return;
     }
     let raf = 0;
-    let last = 0;
-    const tick = (now: number) => {
-      if (now - last >= 250) {
-        last = now;
-        const current = playbackRef.current;
-        if (current) {
-          setDisplayProgressMs(getCurrentProgressMs(current));
-        }
+    const tick = () => {
+      const current = playbackRef.current;
+      if (current) {
+        setDisplayProgressMs(getCurrentProgressMs(current));
       }
       raf = requestAnimationFrame(tick);
     };
@@ -359,5 +391,6 @@ export function useUnifiedPlayback(options: {
     refreshAfterTransport,
     clearTimers,
     scheduleApiFetch,
+    scheduleTransportPolls,
   };
 }

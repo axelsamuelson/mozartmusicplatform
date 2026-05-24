@@ -18,7 +18,6 @@ import {
   markSpotifyMetadataPersisted,
   setCachedSpotifyAccess,
   setInflightSpotifyRefresh,
-  shouldPersistSpotifyMetadata,
 } from "@/lib/spotify/tokenRefreshCache";
 
 type SpotifyRefreshResponse = {
@@ -66,17 +65,23 @@ async function refreshSpotifyUserToken(
   return (await res.json()) as SpotifyRefreshResponse;
 }
 
-async function persistMetadataThrottled(
+/** Always persist after Spotify refresh so metadata survives session restore. */
+async function persistAfterSpotifyRefresh(
   supabase: SupabaseClient,
   userId: string,
-  opts: {
-    provider_refresh_token?: string | null;
-    expiresIn?: number;
-  },
+  refreshToken: string,
+  refreshed: SpotifyRefreshResponse,
 ): Promise<void> {
-  if (!shouldPersistSpotifyMetadata(userId)) return;
-  await persistSpotifyTokenMetadata(supabase, opts);
-  markSpotifyMetadataPersisted(userId);
+  try {
+    await persistSpotifyTokenMetadata(supabase, {
+      provider_refresh_token: refreshed.refresh_token ?? refreshToken,
+      expiresIn: refreshed.expires_in ?? 3600,
+    });
+    markSpotifyMetadataPersisted(userId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn("[token] Failed to persist after refresh:", msg);
+  }
 }
 
 async function refreshAndCache(
@@ -87,10 +92,7 @@ async function refreshAndCache(
   try {
     const data = await refreshSpotifyUserToken(refresh);
     setCachedSpotifyAccess(userId, data.access_token, data.expires_in);
-    await persistMetadataThrottled(supabase, userId, {
-      provider_refresh_token: data.refresh_token ?? refresh,
-      expiresIn: data.expires_in,
-    });
+    await persistAfterSpotifyRefresh(supabase, userId, refresh, data);
     return data.access_token;
   } catch (e) {
     if (isSpotify429Error(e)) {
@@ -103,7 +105,7 @@ async function refreshAndCache(
 
 /**
  * Spotify user access token: in-memory cache → fresh session token → refresh.
- * Does not call Spotify Web API for validation (avoids /v1/me rate limits).
+ * Refresh token order: session.provider_refresh_token → user_metadata.spotify_refresh_token.
  */
 export async function getValidProviderAccessToken(
   supabase: SupabaseClient,
@@ -136,8 +138,9 @@ export async function getValidProviderAccessToken(
   const inflight = getInflightSpotifyRefresh(userId);
   if (inflight) return inflight;
 
-  const refresh =
-    session.provider_refresh_token ?? spotifyRefreshFromUser(user);
+  const refreshFromSession = session.provider_refresh_token?.trim() || null;
+  const refreshFromMetadata = spotifyRefreshFromUser(user);
+  const refresh = refreshFromSession ?? refreshFromMetadata;
 
   if (!refresh) {
     if (session.provider_token) {

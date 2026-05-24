@@ -42,10 +42,14 @@ export function LiveNowPlaying({ session, className }: LiveNowPlayingProps) {
 
   useEffect(() => {
     if (!session.is_playing || !session.spotify_track_id) return;
-    const id = window.setInterval(() => {
+
+    let raf = 0;
+    const tick = () => {
       setSmoothProgress(interpolatedProgressMs(sessionRef.current));
-    }, 1000);
-    return () => window.clearInterval(id);
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
   }, [
     session.spotify_track_id,
     session.is_playing,
@@ -132,7 +136,7 @@ function LiveArt({ session, hasTrack }: { session: LiveSessionRow; hasTrack: boo
 function ProgressFill({ pct }: { pct: number }) {
   return (
     <div
-      className="h-full rounded-full bg-wam transition-[width] duration-300"
+      className="h-full rounded-full bg-wam"
       style={{ width: `${pct}%` }}
     />
   );

@@ -52,17 +52,28 @@ export async function ensureActiveLiveSessionMetadata(): Promise<void> {
 }
 
 /**
- * Skip GET /api/spotify/playback when the host already mirrors via PATCH /sync
- * (song queue, jams, or WAM-controlled playback).
+ * Skip GET /api/spotify/playback when session state comes from host sync / Realtime
+ * instead of per-user Spotify polling.
  */
-export function shouldHostSkipPlaybackApiPoll(
+export function shouldSkipPlaybackApiPoll(
   active: ActiveLiveSessionRef | null,
   currentUserId: string | null,
 ): boolean {
-  if (!active || !currentUserId) return false;
-  if (active.hostUserId !== currentUserId) return false;
-  if (active.wamControlsPlayback) return true;
-  if (active.jukeboxEnabled || active.jamsEnabled) return true;
+  if (!active) return false;
+
+  if (currentUserId && active.hostUserId === currentUserId) {
+    if (active.wamControlsPlayback) return true;
+    if (active.jukeboxEnabled || active.jamsEnabled) return true;
+  }
+
+  if (
+    currentUserId &&
+    active.hostUserId !== currentUserId &&
+    active.sessionId
+  ) {
+    return true;
+  }
+
   return false;
 }
 

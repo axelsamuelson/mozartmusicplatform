@@ -38,12 +38,23 @@ export async function GET(request: NextRequest) {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (session?.provider_refresh_token) {
+
+      const providerRefreshToken = session?.provider_refresh_token ?? null;
+      const providerToken = session?.provider_token ?? null;
+
+      if (providerToken) {
         await persistSpotifyTokenMetadata(supabase, {
-          provider_refresh_token: session.provider_refresh_token,
+          provider_refresh_token: providerRefreshToken,
           expiresIn: 3600,
         });
       }
+
+      if (!providerRefreshToken) {
+        console.warn(
+          "[auth/callback] No provider_refresh_token in session — user may need to re-auth after token expiry",
+        );
+      }
+
       return response;
     }
 

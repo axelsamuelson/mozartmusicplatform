@@ -218,7 +218,7 @@ const memPlaybackByUser = new Map<
   string,
   { at: number; data: SpotifyCurrentPlayback | null }
 >();
-const MEM_PLAYBACK_MS = 12_000;
+const MEM_PLAYBACK_MS = 2_000;
 
 export type FetchCurrentPlaybackOptions = {
   /** Enables shared cache + throttle (strongly recommended for server routes). */

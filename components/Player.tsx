@@ -23,12 +23,13 @@ import {
 import {
   ensureActiveLiveSessionMetadata,
   shouldEnableLiveSessionHostSync,
-  shouldHostSkipPlaybackApiPoll,
+  shouldSkipPlaybackApiPoll,
 } from "@/lib/live/activeSessionMeta";
 import { useLiveQueueAutoAdvance } from "@/lib/live/useLiveQueueAutoAdvance";
 import { useLiveSessionHostSync } from "@/lib/live/useLiveSessionHostSync";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
+import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import { createClient } from "@/lib/supabase/client";
 import { emptyPlayback, sdkStateToPlayback } from "@/lib/playback/mappers";
 import { playlistIdFromContextUri } from "@/lib/spotify/currentlyPlaying";
@@ -142,6 +143,8 @@ export function Player() {
     uri: null,
     name: null,
   });
+  const hostSyncTriggerRef = useRef<() => void>(() => {});
+  const refreshAfterTransportRef = useRef<() => Promise<void>>(async () => {});
 
   const {
     playback,
@@ -149,12 +152,27 @@ export function Player() {
     applyPlayback,
     fetchApiPlayback,
     refreshAfterTransport,
+    scheduleTransportPolls,
   } = useUnifiedPlayback({
     hasToken,
     playbackReady,
     skipApiPoll,
     enabled: hasUser && hasToken,
+    onTrackChanged: () => hostSyncTriggerRef.current(),
   });
+
+  refreshAfterTransportRef.current = refreshAfterTransport;
+
+  const { triggerImmediateSync } = useLiveSessionHostSync({
+    enabled: hasUser && hasToken && hostSyncEnabled,
+    onTrackChanged: () => {
+      void refreshAfterTransportRef.current();
+    },
+  });
+
+  useEffect(() => {
+    hostSyncTriggerRef.current = hostSyncEnabled ? triggerImmediateSync : () => {};
+  }, [hostSyncEnabled, triggerImmediateSync]);
 
   const refreshLiveSessionPolling = useCallback(() => {
     const active = getActiveLiveSession();
@@ -164,7 +182,7 @@ export function Player() {
       setHostSyncEnabled(false);
       return;
     }
-    setSkipApiPoll(shouldHostSkipPlaybackApiPoll(active, currentUserId));
+    setSkipApiPoll(shouldSkipPlaybackApiPoll(active, currentUserId));
     setHostSyncEnabled(shouldEnableLiveSessionHostSync(active, currentUserId));
     setQueueAutoAdvanceEnabled(
       Boolean(
@@ -214,7 +232,7 @@ export function Player() {
       void ensureActiveLiveSessionMetadata().then(() => {
         refreshLiveSessionPolling();
         const active = getActiveLiveSession();
-        if (active && shouldHostSkipPlaybackApiPoll(active, currentUserId)) {
+        if (active && shouldSkipPlaybackApiPoll(active, currentUserId)) {
           void refreshAfterTransport();
           void fetchApiPlayback(true);
         }
@@ -224,14 +242,10 @@ export function Player() {
     return () => window.removeEventListener("wam-live-session-changed", onSessionChange);
   }, [currentUserId, fetchApiPlayback, refreshAfterTransport, refreshLiveSessionPolling]);
 
-  useLiveSessionHostSync({
-    enabled: hasUser && hasToken && hostSyncEnabled,
-    onTrackChanged: () => {
-      void refreshAfterTransport();
-    },
-  });
-
   const lastSyncedUserIdRef = useRef<string | null>(null);
+  const syncSessionRef = useRef<(authSession: Session | null) => Promise<void>>(
+    async () => {},
+  );
 
   useEffect(() => {
     const supabase = createClient();
@@ -307,10 +321,10 @@ export function Player() {
           const mapped = sdkStateToPlayback(s);
           if (mapped) {
             applyPlayback(mapped);
-          } else if (!shouldHostSkipPlaybackApiPoll(getActiveLiveSession(), user.id)) {
+          } else if (!shouldSkipPlaybackApiPoll(getActiveLiveSession(), user.id)) {
             await fetchApiPlayback();
           }
-        } else if (!shouldHostSkipPlaybackApiPoll(getActiveLiveSession(), user.id)) {
+        } else if (!shouldSkipPlaybackApiPoll(getActiveLiveSession(), user.id)) {
           await fetchApiPlayback();
         }
       } catch (e) {
@@ -325,10 +339,28 @@ export function Player() {
       }
     }
 
+    syncSessionRef.current = syncSession;
+
+    void supabase.auth.getSession().then(({ data }) => {
+      if (data.session) {
+        void syncSession(data.session);
+      }
+    });
+
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       const userId = session?.user?.id ?? null;
+
+      if (event === "TOKEN_REFRESHED") {
+        if (process.env.NODE_ENV === "development") {
+          console.log("[Player] TOKEN_REFRESHED sync");
+        }
+        lastSyncedUserIdRef.current = userId;
+        void syncSession(session);
+        return;
+      }
+
       if (userId === lastSyncedUserIdRef.current) return;
       lastSyncedUserIdRef.current = userId;
       void syncSession(session);
@@ -434,6 +466,56 @@ export function Player() {
     playerLog("playback:", playback);
   }, [playback]);
 
+  const paused = !playback?.isPlaying;
+
+  const onTogglePlayPause = useCallback(() => {
+    if (playback) {
+      applyPlayback({
+        ...playback,
+        isPlaying: paused,
+        syncedAt: Date.now(),
+      });
+    }
+    void (paused ? resume() : pause()).then(() => refreshAfterTransport());
+  }, [applyPlayback, paused, playback, refreshAfterTransport]);
+
+  const onNextTrack = useCallback(() => {
+    if (playback) {
+      applyPlayback({
+        ...playback,
+        trackId: null,
+        trackName: null,
+        progressMsAtSync: 0,
+        syncedAt: Date.now(),
+      });
+    }
+    scheduleTransportPolls();
+    void next().then(() => refreshAfterTransport());
+  }, [applyPlayback, playback, refreshAfterTransport, scheduleTransportPolls]);
+
+  const onPreviousTrack = useCallback(() => {
+    if (playback) {
+      applyPlayback({
+        ...playback,
+        progressMsAtSync: 0,
+        syncedAt: Date.now(),
+      });
+    }
+    scheduleTransportPolls();
+    void previous().then(() => refreshAfterTransport());
+  }, [applyPlayback, playback, refreshAfterTransport, scheduleTransportPolls]);
+
+  const handleReconnectSpotify = useCallback(async () => {
+    const supabase = createClient();
+    const { error } = await supabase.auth.refreshSession();
+    if (!error) {
+      const { data } = await supabase.auth.getSession();
+      await syncSessionRef.current(data.session);
+      return;
+    }
+    await signInWithSpotifyClient();
+  }, []);
+
   if (!hasUser) return null;
 
   const artUrl = playback?.imageUrl ?? null;
@@ -452,7 +534,6 @@ export function Player() {
   const duration = playback?.durationMs ?? 0;
   const position = displayProgressMs;
   const progress = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
-  const paused = !playback?.isPlaying;
 
   const canShowRate = Boolean(
     nowTrackId && hasAnyTrack && nowPlayingIsRateableTrack,
@@ -464,6 +545,13 @@ export function Player() {
     const x = e.clientX - rect.left;
     const ratio = Math.min(1, Math.max(0, x / rect.width));
     const ms = Math.floor(ratio * duration);
+    if (playback) {
+      applyPlayback({
+        ...playback,
+        progressMsAtSync: ms,
+        syncedAt: Date.now(),
+      });
+    }
     void seek(ms).then(() => refreshAfterTransport());
   };
 
@@ -484,11 +572,15 @@ export function Player() {
           "fixed right-0 bottom-0 left-0 z-40 border-t border-white/10 bg-black/95 text-white backdrop-blur-xl",
         )}
       >
-        <div className="mx-auto flex max-w-6xl flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-3 sm:py-3">
-          <p className="text-center text-xs text-white/55 sm:text-left">
-            Log out and sign in again to enable in-browser playback (Premium +
-            new scopes).
-          </p>
+        <div className="mx-auto flex max-w-6xl items-center justify-center gap-3 px-4 py-3">
+          <span className="text-xs text-white/40">Spotify connection lost</span>
+          <button
+            type="button"
+            onClick={() => void handleReconnectSpotify()}
+            className="text-xs text-wam underline underline-offset-2 hover:text-wam/80"
+          >
+            Reconnect
+          </button>
         </div>
       </div>
     );
@@ -586,7 +678,7 @@ export function Player() {
             type="button"
             aria-label="Previous"
             className="rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            onClick={() => void previous().then(() => refreshAfterTransport())}
+            onClick={onPreviousTrack}
           >
             <SkipBack className="size-5" />
           </button>
@@ -594,7 +686,7 @@ export function Player() {
             type="button"
             aria-label={paused ? "Play" : "Pause"}
             className="flex size-10 shrink-0 items-center justify-center rounded-full bg-wam text-black shadow-md transition-transform hover:scale-[1.03] hover:bg-wam/90"
-            onClick={() => void (paused ? resume() : pause()).then(() => refreshAfterTransport())}
+            onClick={onTogglePlayPause}
           >
             {paused ? (
               <Play className="size-[18px] fill-current" />
@@ -606,7 +698,7 @@ export function Player() {
             type="button"
             aria-label="Next"
             className="rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            onClick={() => void next().then(() => refreshAfterTransport())}
+            onClick={onNextTrack}
           >
             <SkipForward className="size-5" />
           </button>
@@ -661,7 +753,7 @@ export function Player() {
               type="button"
               aria-label="Previous"
               className="rounded-full p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-              onClick={() => void previous().then(() => refreshAfterTransport())}
+              onClick={onPreviousTrack}
             >
               <SkipBack className="size-4" />
             </button>
@@ -669,7 +761,7 @@ export function Player() {
               type="button"
               aria-label={paused ? "Play" : "Pause"}
               className="flex size-9 shrink-0 items-center justify-center rounded-full bg-wam text-black shadow-md transition-transform hover:scale-[1.03] hover:bg-wam/90"
-              onClick={() => void (paused ? resume() : pause()).then(() => refreshAfterTransport())}
+              onClick={onTogglePlayPause}
             >
               {paused ? (
                 <Play className="size-4 fill-current" />
@@ -681,7 +773,7 @@ export function Player() {
               type="button"
               aria-label="Next"
               className="rounded-full p-2 text-white/70 transition-colors hover:bg-white/10 hover:text-white"
-              onClick={() => void next().then(() => refreshAfterTransport())}
+              onClick={onNextTrack}
             >
               <SkipForward className="size-4" />
             </button>

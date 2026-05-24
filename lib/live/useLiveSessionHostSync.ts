@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import {
   clearActiveLiveSession,
@@ -9,9 +9,9 @@ import {
 import { shouldEnableLiveSessionHostSync } from "@/lib/live/activeSessionMeta";
 import { createClient } from "@/lib/supabase/client";
 
-/** Host live sync — conservative interval to protect Spotify rate limits. */
-const SYNC_INTERVAL_BASE_MS = 35_000;
-const SYNC_INTERVAL_MAX_MS = 90_000;
+/** Host live sync — pushes Spotify state into live_sessions for participants. */
+const SYNC_INTERVAL_BASE_MS = 8_000;
+const SYNC_INTERVAL_MAX_MS = 20_000;
 
 export type LiveSessionHostSyncOptions = {
   enabled: boolean;
@@ -19,14 +19,23 @@ export type LiveSessionHostSyncOptions = {
   onTrackChanged?: () => void;
 };
 
+export type LiveSessionHostSyncResult = {
+  /** Immediate PATCH /sync (e.g. when local playback detects a track change). */
+  triggerImmediateSync: () => void;
+};
+
 /** Host only: push Spotify playback into live_sessions for participants. */
-export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): void {
+export function useLiveSessionHostSync(
+  options: LiveSessionHostSyncOptions,
+): LiveSessionHostSyncResult {
   const { enabled, onTrackChanged } = options;
   const lastTrackIdRef = useRef<string | null>(null);
+  const lastSyncedTrackIdRef = useRef<string | null>(null);
   const unchangedStreakRef = useRef(0);
   const intervalMsRef = useRef(SYNC_INTERVAL_BASE_MS);
   const onTrackChangedRef = useRef(onTrackChanged);
   onTrackChangedRef.current = onTrackChanged;
+  const triggerImmediateSyncRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     if (!enabled) return;
@@ -34,29 +43,34 @@ export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): voi
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
 
-    function scheduleNext() {
+    function scheduleNext(delayMs = intervalMsRef.current) {
       if (cancelled) return;
+      if (timeoutId) clearTimeout(timeoutId);
       timeoutId = setTimeout(() => {
-        void syncPlayback(false).finally(scheduleNext);
-      }, intervalMsRef.current);
+        void syncPlayback(false).then((trackJustChanged) => {
+          scheduleNext(
+            trackJustChanged ? SYNC_INTERVAL_BASE_MS : intervalMsRef.current,
+          );
+        });
+      }, delayMs);
     }
 
-    async function syncPlayback(force = false) {
+    async function syncPlayback(force = false): Promise<boolean> {
       const ref = getActiveLiveSession();
-      if (!ref || cancelled) return;
+      if (!ref || cancelled) return false;
 
       if (ref.isActive === false) {
         clearActiveLiveSession();
-        return;
+        return false;
       }
 
       const supabase = createClient();
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (!user || cancelled) return;
+      if (!user || cancelled) return false;
       if (!shouldEnableLiveSessionHostSync(ref, user.id)) {
-        return;
+        return false;
       }
 
       try {
@@ -64,7 +78,7 @@ export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): voi
           method: "PATCH",
           cache: "no-store",
         });
-        if (!res.ok || cancelled) return;
+        if (!res.ok || cancelled) return false;
         const body = (await res.json()) as {
           session?: { spotify_track_id?: string | null };
           unchanged?: boolean;
@@ -72,45 +86,81 @@ export function useLiveSessionHostSync(options: LiveSessionHostSyncOptions): voi
           reason?: string;
         };
 
+        const trackId = body.session?.spotify_track_id ?? null;
+
+        if (trackId && trackId !== lastSyncedTrackIdRef.current) {
+          lastSyncedTrackIdRef.current = trackId;
+          unchangedStreakRef.current = 0;
+          intervalMsRef.current = SYNC_INTERVAL_BASE_MS;
+
+          const prev = lastTrackIdRef.current;
+          if (trackId !== prev) {
+            lastTrackIdRef.current = trackId;
+            if (trackId && trackId !== prev) {
+              onTrackChangedRef.current?.();
+            }
+          } else if (force) {
+            lastTrackIdRef.current = trackId;
+          }
+
+          return true;
+        }
+
         if (body.unchanged || body.syncSkipped) {
           unchangedStreakRef.current += 1;
           intervalMsRef.current = Math.min(
-            SYNC_INTERVAL_BASE_MS + unchangedStreakRef.current * 10_000,
+            SYNC_INTERVAL_BASE_MS + unchangedStreakRef.current * 2_000,
             SYNC_INTERVAL_MAX_MS,
           );
         } else {
           unchangedStreakRef.current = 0;
           intervalMsRef.current = SYNC_INTERVAL_BASE_MS;
-        }
-
-        const trackId = body.session?.spotify_track_id ?? null;
-        const prev = lastTrackIdRef.current;
-        if (trackId !== prev) {
-          lastTrackIdRef.current = trackId;
-          if (trackId && trackId !== prev) {
-            onTrackChangedRef.current?.();
+          if (force) {
+            lastTrackIdRef.current = trackId;
           }
-        } else if (force) {
-          lastTrackIdRef.current = trackId;
         }
       } catch {
         /* ignore transient network errors */
       }
+      return false;
     }
 
-    void syncPlayback(true).finally(scheduleNext);
+    triggerImmediateSyncRef.current = () => {
+      if (cancelled) return;
+      if (timeoutId) clearTimeout(timeoutId);
+      timeoutId = null;
+      void syncPlayback(true).then((trackJustChanged) => {
+        scheduleNext(
+          trackJustChanged ? SYNC_INTERVAL_BASE_MS : SYNC_INTERVAL_BASE_MS,
+        );
+      });
+    };
+
+    void syncPlayback(true).then((trackJustChanged) => {
+      scheduleNext(
+        trackJustChanged ? SYNC_INTERVAL_BASE_MS : intervalMsRef.current,
+      );
+    });
 
     const onSessionStarted = () => {
       unchangedStreakRef.current = 0;
       intervalMsRef.current = SYNC_INTERVAL_BASE_MS;
-      void syncPlayback(true);
+      lastSyncedTrackIdRef.current = null;
+      triggerImmediateSyncRef.current();
     };
     window.addEventListener("wam-live-session-changed", onSessionStarted);
 
     return () => {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
+      triggerImmediateSyncRef.current = () => {};
       window.removeEventListener("wam-live-session-changed", onSessionStarted);
     };
   }, [enabled]);
+
+  const triggerImmediateSync = useCallback(() => {
+    triggerImmediateSyncRef.current();
+  }, []);
+
+  return { triggerImmediateSync };
 }
