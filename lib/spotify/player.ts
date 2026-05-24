@@ -93,7 +93,9 @@ let pendingReadyReject: ((err: Error) => void) | null = null;
 type StateChangeListener = (state: SpotifyWebPlaybackState | null) => void;
 const stateChangeListeners = new Set<StateChangeListener>();
 
-const READY_TIMEOUT_MS = 30_000;
+const READY_TIMEOUT_MS = 45_000;
+const MAX_CONNECT_ATTEMPTS = 3;
+const CONNECT_RETRY_DELAY_MS = 1_500;
 
 export function registerStateChangeListener(listener: StateChangeListener): () => void {
   stateChangeListeners.add(listener);
@@ -127,6 +129,21 @@ export function unregisterPlaybackTokenProvider(): void {
 function abortPendingReady(reason: string): void {
   pendingReadyReject?.(new Error(reason));
   pendingReadyReject = null;
+}
+
+function isConnectRetryableError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const msg = err.message;
+  return (
+    msg.includes("did not start in time") ||
+    msg.includes("would not connect") ||
+    msg.includes("Playback disconnected") ||
+    msg.includes("failed to start")
+  );
+}
+
+export function isPlaybackDeviceReady(): boolean {
+  return Boolean(innerPlayer && playbackDeviceId);
 }
 
 function loadSdk(): Promise<void> {
@@ -439,18 +456,33 @@ async function ensurePlayer(): Promise<SpotifyWebPlaybackPlayer> {
   const generation = connectGeneration;
 
   connectPromise = (async () => {
-    try {
-      const player = await connectWebPlaybackPlayer(generation);
-      if (!player || generation !== connectGeneration) return null;
-      innerPlayer = player;
-      return player;
-    } catch (e) {
-      if (generation === connectGeneration) {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < MAX_CONNECT_ATTEMPTS; attempt++) {
+      if (generation !== connectGeneration) return null;
+      try {
+        const player = await connectWebPlaybackPlayer(generation);
+        if (!player || generation !== connectGeneration) return null;
+        innerPlayer = player;
+        return player;
+      } catch (e) {
+        lastError = e;
+        if (generation !== connectGeneration) return null;
         innerPlayer = null;
         playbackDeviceId = null;
+        if (
+          attempt >= MAX_CONNECT_ATTEMPTS - 1 ||
+          !isConnectRetryableError(e)
+        ) {
+          throw e;
+        }
+        await new Promise((r) =>
+          window.setTimeout(r, CONNECT_RETRY_DELAY_MS * (attempt + 1)),
+        );
       }
-      throw e;
     }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error("Spotify player failed to connect");
   })();
 
   try {

@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { Copy, EyeOff, ListMusic, Radio, X } from "lucide-react";
 import { toast } from "sonner";
@@ -29,6 +30,8 @@ import { useLiveSessionChannel } from "@/lib/live/useLiveSessionChannel";
 import { useLiveSessionDisplayName } from "@/lib/live/useLiveSessionDisplayName";
 import { liveAvatarUrl } from "@/lib/live/userDisplay";
 import { createClient } from "@/lib/supabase/client";
+import { isLiveSimulateEnabled } from "@/lib/dev/liveSimulateGate";
+import { startQuickTestSession } from "@/lib/dev/startQuickTestSession";
 import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
 import { normalizeJukeboxRankingMode } from "@/lib/live/jukeboxRanking";
 import type { ActiveLiveSessionRef, JukeboxRankingMode, LiveSessionRow } from "@/lib/types/live";
@@ -73,7 +76,9 @@ function AnonymousModeToggle({
 }
 
 export function LiveSessionButton({ canStart, className }: LiveSessionButtonProps) {
+  const router = useRouter();
   const advancedModes = isLiveAdvancedModesEnabled();
+  const simulateEnabled = isLiveSimulateEnabled();
   const [userId, setUserId] = useState<string | null>(null);
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [active, setActive] = useState<ActiveLiveSessionRef | null>(null);
@@ -157,6 +162,22 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
       syncActiveLiveSessionFromRow(next);
     },
   });
+
+  async function handleQuickTest() {
+    setStarting(true);
+    try {
+      const { code, session } = await startQuickTestSession();
+      const ref = activeLiveSessionRefFromRow(session, { simulated: true });
+      setActive(ref);
+      setSession(session);
+      router.push(`/live/${code}`);
+      toast.success("Test session ready");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not start test session");
+    } finally {
+      setStarting(false);
+    }
+  }
 
   async function handleStart() {
     if (!canStart) {
@@ -434,6 +455,19 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
           aria-label={`Live session ${formattedCode}`}
         >
           {formattedCode}
+        </button>
+      ) : simulateEnabled ? (
+        <button
+          type="button"
+          onClick={() => void handleQuickTest()}
+          disabled={starting}
+          className={cn(
+            "shrink-0 rounded-full border border-wam/50 bg-wam/15 px-3 py-1 text-xs font-semibold text-wam transition-colors hover:bg-wam/25 disabled:opacity-40",
+            className,
+          )}
+          title="Start test session (4 users, no Spotify)"
+        >
+          {starting ? "…" : "Test WAM"}
         </button>
       ) : (
         <button

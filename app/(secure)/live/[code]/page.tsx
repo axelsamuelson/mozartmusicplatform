@@ -8,6 +8,8 @@ import { JukeboxAddSong } from "@/components/live/JukeboxAddSong";
 import { JukeboxQueue } from "@/components/live/JukeboxQueue";
 import { JukeboxScoreboard } from "@/components/live/JukeboxScoreboard";
 import { LiveJamsRoom } from "@/components/live/LiveJamsRoom";
+import { LiveSimulatePanel } from "@/components/live/LiveSimulatePanel";
+import { useTestParticipants } from "@/lib/dev/useTestParticipants";
 import { SessionTimer } from "@/components/live/SessionTimer";
 import { LiveNowPlaying } from "@/components/LiveNowPlaying";
 import { LiveParticipants } from "@/components/LiveParticipants";
@@ -248,10 +250,7 @@ export default function LiveSessionPage() {
     ])
       .then(async ([sess, tags]) => {
         setSession(sess);
-        const active = getActiveLiveSession();
-        if (active?.sessionId === sess.id) {
-          setActiveLiveSession(activeLiveSessionRefFromRow(sess));
-        }
+        setActiveLiveSession(activeLiveSessionRefFromRow(sess));
         setGenreTags(tags.genre_tags ?? []);
         setMoodTags(tags.mood_tags ?? []);
         setMomentTags(tags.moment_tags ?? []);
@@ -298,6 +297,8 @@ export default function LiveSessionPage() {
     Boolean(session?.anonymous_mode),
   );
 
+  const sessionIsSimulated = session?.device_name === "[simulated]";
+
   const { participants } = useLiveSessionChannel({
     sessionId: session?.id ?? null,
     userId,
@@ -324,7 +325,13 @@ export default function LiveSessionPage() {
     onBufferChange: () => setBufferRefreshKey((k) => k + 1),
   });
 
-  const onlineCount = Math.max(participants.length, 1);
+  const { displayParticipants } = useTestParticipants(
+    participants,
+    currentRatings,
+    Boolean(sessionIsSimulated),
+  );
+
+  const onlineCount = Math.max(displayParticipants.length, 1);
   const ratedCount = displayAggregate?.rated_count ?? currentRatings.length;
   const hideAvatars = Boolean(session?.anonymous_mode);
 
@@ -494,7 +501,13 @@ export default function LiveSessionPage() {
     <main className={mainClass}>
       <header className="sticky top-16 z-30 mb-6 rounded-xl border border-white/10 bg-black/70 py-4 text-center backdrop-blur">
         <p className="text-xs uppercase tracking-widest text-white/40">
-          {jams ? "WAM Jams" : jukebox ? "Jukebox session" : "Live session"}
+          {sessionIsSimulated
+            ? "Test session"
+            : jams
+              ? "WAM Jams"
+              : jukebox
+                ? "Jukebox session"
+                : "Live session"}
         </p>
         <p className="mt-1 font-mono text-2xl font-bold tracking-[0.3em] text-wam">{code}</p>
         {session.anonymous_mode ? (
@@ -523,7 +536,7 @@ export default function LiveSessionPage() {
         <LiveJamsRoom
           session={session}
           userId={userId}
-          participants={participants}
+          participants={displayParticipants}
           hideAvatars={hideAvatars}
           queue={queue}
           scores={scores}
@@ -548,6 +561,15 @@ export default function LiveSessionPage() {
       <div className={cn(wideLayout && "grid gap-6 lg:grid-cols-[1fr_280px]")}>
         <div className="min-w-0 space-y-6">
           <LiveNowPlaying session={session} />
+
+          <LiveSimulatePanel
+            session={session}
+            isHost={isHost}
+            onSessionUpdate={applySession}
+            onRatingsSeeded={() => {
+              if (session?.id) void loadRatings(session.id);
+            }}
+          />
 
           {canControlPlayback && (showSongQueue || jams) ? (
             <button
@@ -595,7 +617,10 @@ export default function LiveSessionPage() {
             <p className="mb-3 text-center text-xs uppercase tracking-wider text-white/40">
               In the room
             </p>
-            <LiveParticipants participants={participants} hideAvatars={hideAvatars} />
+            <LiveParticipants
+              participants={displayParticipants}
+              hideAvatars={hideAvatars}
+            />
           </section>
 
           {isTrackOwner ? (

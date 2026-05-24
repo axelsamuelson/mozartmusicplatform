@@ -1,13 +1,12 @@
-import { NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 
-import { ratingMatchesPlaylistFilters } from "@/lib/playlist/matchRating";
-import { loadAllUserRatings } from "@/lib/ratings/normalize";
+import { loadMatchedPlaylistTracks } from "@/lib/playlist/loadMatchedTracks";
+import { parsePlaylistPatchBody, playlistFiltersToDbColumns } from "@/lib/playlist/playlistFilters";
 import { assertWamOwned } from "@/lib/spotify/playlistGuard";
 import { SPOTIFY_CIRCUIT_UNAVAILABLE_MSG } from "@/lib/spotify/rateLimiter";
 import { unfollowSpotifyPlaylist } from "@/lib/spotify/userPlaylistSpotify";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
-import type { RatingDetail } from "@/lib/types/ratings";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
 
 const UUID_RE =
@@ -50,22 +49,10 @@ export async function GET(
   }
 
   const pl = row as WamPlaylistRow;
-  const filters: Parameters<typeof ratingMatchesPlaylistFilters>[1] = {
-    filter_genres: pl.filter_genres,
-    filter_mood_levels: pl.filter_mood_levels,
-    filter_moments: pl.filter_moments,
-    filter_min_score: pl.filter_min_score,
-    filter_vibes: pl.filter_vibes ?? null,
-    filter_tempo_min: pl.filter_tempo_min ?? null,
-    filter_tempo_max: pl.filter_tempo_max ?? null,
-    filter_intensity_min: pl.filter_intensity_min ?? null,
-    filter_intensity_max: pl.filter_intensity_max ?? null,
-  };
 
-  let matched_tracks: RatingDetail[] = [];
+  let matched_tracks;
   try {
-    const ratings = await loadAllUserRatings(supabase, user.id);
-    matched_tracks = ratings.filter((r) => ratingMatchesPlaylistFilters(r, filters));
+    matched_tracks = await loadMatchedPlaylistTracks(supabase, user.id, pl);
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load ratings";
     return NextResponse.json({ error: msg }, { status: 500 });
@@ -75,6 +62,78 @@ export async function GET(
     playlist: pl,
     matched_tracks,
   });
+}
+
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ playlistId: string }> },
+) {
+  const { playlistId } = await context.params;
+  if (!isUuid(playlistId)) {
+    return NextResponse.json({ error: "Invalid playlist id" }, { status: 400 });
+  }
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await request.json()) as Record<string, unknown>;
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+  }
+
+  let patch: ReturnType<typeof parsePlaylistPatchBody>;
+  try {
+    patch = parsePlaylistPatchBody(body);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Invalid patch body";
+    return NextResponse.json({ error: msg }, { status: 400 });
+  }
+
+  if (!patch.sort_order && !patch.filters) {
+    return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+  }
+
+  const update: Record<string, unknown> = {
+    updated_at: new Date().toISOString(),
+  };
+  if (patch.sort_order) update.sort_order = patch.sort_order;
+  if (patch.filters) {
+    Object.assign(update, playlistFiltersToDbColumns(patch.filters));
+  }
+
+  const { data: updated, error } = await supabase
+    .from("wam_playlists")
+    .update(update)
+    .eq("id", playlistId)
+    .eq("user_id", user.id)
+    .select("*")
+    .maybeSingle();
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+  if (!updated) {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  const pl = updated as WamPlaylistRow;
+  let matched_tracks;
+  try {
+    matched_tracks = await loadMatchedPlaylistTracks(supabase, user.id, pl);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "Failed to load ratings";
+    return NextResponse.json({ error: msg }, { status: 500 });
+  }
+
+  return NextResponse.json({ playlist: pl, matched_tracks });
 }
 
 export async function DELETE(

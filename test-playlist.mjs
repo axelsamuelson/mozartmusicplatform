@@ -173,6 +173,7 @@ const payload = {
   filter_vibes: ["high_energy"],
   filter_moments: [],
   filter_min_score: 0,
+  sort_order: "score_desc",
 };
 
 console.log("\nPOST http://localhost:3000/api/playlists");

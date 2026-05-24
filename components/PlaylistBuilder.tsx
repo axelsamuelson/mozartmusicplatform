@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Slider } from "@/components/ui/slider";
+import type { PlaylistFiltersState } from "@/lib/playlist/playlistFilters";
 import { VIBE_PRESETS } from "@/lib/playlist/tempoIntensityPresets";
 import type {
   GenreTagRow,
@@ -19,16 +20,10 @@ const MOMENT_GROUPS: { key: MomentSubcategory; label: string }[] = [
   { key: "activity", label: "Activity" },
 ];
 
-export interface PlaylistFiltersState {
-  filter_genres: string[];
-  filter_moments: string[];
-  filter_min_score: number;
-  filter_vibes: string[];
-  filter_tempo_min: number | null;
-  filter_tempo_max: number | null;
-  filter_intensity_min: number | null;
-  filter_intensity_max: number | null;
-}
+export type { PlaylistFiltersState };
+
+const CURRENT_YEAR = new Date().getFullYear();
+const MIN_RELEASE_YEAR = 1960;
 
 export interface PlaylistBuilderProps {
   genreTags: GenreTagRow[];
@@ -129,6 +124,99 @@ function RangeRow({
         </>
       ) : (
         <p className="text-[11px] text-white/40">No {label.toLowerCase()} limit</p>
+      )}
+    </div>
+  );
+}
+
+function YearRangeRow({
+  min,
+  max,
+  onMinChange,
+  onMaxChange,
+  disabled,
+}: {
+  min: number | null;
+  max: number | null;
+  onMinChange: (v: number | null) => void;
+  onMaxChange: (v: number | null) => void;
+  disabled?: boolean;
+}) {
+  const active = min != null || max != null;
+  const minVal = min ?? MIN_RELEASE_YEAR;
+  const maxVal = max ?? CURRENT_YEAR;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-white/[0.08] bg-white/[0.03] p-3">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium uppercase tracking-wider text-white/50">
+          Release year
+        </span>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            if (active) {
+              onMinChange(null);
+              onMaxChange(null);
+            } else {
+              onMinChange(MIN_RELEASE_YEAR);
+              onMaxChange(CURRENT_YEAR);
+            }
+          }}
+          className={cn(
+            "text-[10px] font-medium uppercase tracking-wide transition-colors",
+            active ? "text-wam" : "text-white/40 hover:text-white/60",
+          )}
+        >
+          {active ? "Clear" : "Any year"}
+        </button>
+      </div>
+      <p className="text-[11px] leading-relaxed text-white/45">
+        Uses the track&apos;s album release year from Spotify. Tracks without year
+        metadata are excluded when a year filter is active.
+      </p>
+      {active ? (
+        <>
+          <div className="flex items-center justify-between text-xs text-white/50">
+            <span>From {minVal}</span>
+            <span>To {maxVal}</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <p className="mb-1 text-[10px] text-white/40">Earliest</p>
+              <Slider
+                min={MIN_RELEASE_YEAR}
+                max={CURRENT_YEAR}
+                step={1}
+                disabled={disabled}
+                value={[minVal]}
+                onValueChange={([v]) => {
+                  const next = v ?? MIN_RELEASE_YEAR;
+                  onMinChange(next);
+                  if (max != null && next > max) onMaxChange(next);
+                }}
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-[10px] text-white/40">Latest</p>
+              <Slider
+                min={MIN_RELEASE_YEAR}
+                max={CURRENT_YEAR}
+                step={1}
+                disabled={disabled}
+                value={[maxVal]}
+                onValueChange={([v]) => {
+                  const next = v ?? CURRENT_YEAR;
+                  onMaxChange(next);
+                  if (min != null && next < min) onMinChange(next);
+                }}
+              />
+            </div>
+          </div>
+        </>
+      ) : (
+        <p className="text-[11px] text-white/40">All release years</p>
       )}
     </div>
   );
@@ -319,6 +407,16 @@ export function PlaylistBuilder({
             </div>
           );
         })}
+      </section>
+
+      <section className="flex flex-col gap-2">
+        <YearRangeRow
+          min={value.filter_release_year_min}
+          max={value.filter_release_year_max}
+          disabled={disabled}
+          onMinChange={(v) => onChange({ ...value, filter_release_year_min: v })}
+          onMaxChange={(v) => onChange({ ...value, filter_release_year_max: v })}
+        />
       </section>
 
       <section className="flex flex-col gap-3">

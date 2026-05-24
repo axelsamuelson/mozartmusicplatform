@@ -11,8 +11,15 @@ function randomTabId(): string {
 const tabId =
   typeof window !== "undefined" ? randomTabId() : "server";
 
+/** Last leader state from an active poll heartbeat (null if Player not mounted). */
+let knownPollLeader: boolean | null = null;
+
 export function getPlaybackTabId(): string {
   return tabId;
+}
+
+export function getKnownPollLeader(): boolean | null {
+  return knownPollLeader;
 }
 
 export function tryBecomePollLeader(): boolean {
@@ -50,12 +57,14 @@ export function startPollLeaderHeartbeat(
   }
 
   let isLeader = tryBecomePollLeader();
+  knownPollLeader = isLeader;
   onLeaderChange(isLeader);
 
   const id = window.setInterval(() => {
     const next = tryBecomePollLeader();
     if (next !== isLeader) {
       isLeader = next;
+      knownPollLeader = isLeader;
       onLeaderChange(isLeader);
     } else if (isLeader) {
       tryBecomePollLeader();

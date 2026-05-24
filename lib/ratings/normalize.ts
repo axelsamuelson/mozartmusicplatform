@@ -25,7 +25,8 @@ export const RATING_SELECT = `
     image_url,
     primary_artist_id,
     preview_url,
-    genres
+    genres,
+    release_year
   ),
   rating_genres (
     genre_tag_id,
@@ -61,6 +62,11 @@ export function parseCachedItem(row: Record<string, unknown>): CachedItemSummary
     typeof (ci as { primary_artist_id?: unknown }).primary_artist_id === "string"
       ? (ci as { primary_artist_id: string }).primary_artist_id.trim() || null
       : null;
+  const releaseYearRaw = (ci as { release_year?: unknown }).release_year;
+  const release_year =
+    typeof releaseYearRaw === "number" && Number.isFinite(releaseYearRaw)
+      ? Math.round(releaseYearRaw)
+      : null;
   return {
     spotify_id: ci.spotify_id,
     type: t as ItemType,
@@ -68,6 +74,7 @@ export function parseCachedItem(row: Record<string, unknown>): CachedItemSummary
     artist_name: ci.artist_name ?? null,
     image_url: ci.image_url ?? null,
     primary_artist_id: t === "track" ? primary : null,
+    release_year,
   };
 }
 

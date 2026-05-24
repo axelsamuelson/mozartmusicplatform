@@ -30,6 +30,8 @@ export interface CachedItemSummary {
   image_url: string | null;
   /** First credited artist on Spotify (tracks only); used to aggregate top artists from track scores. */
   primary_artist_id?: string | null;
+  /** Calendar year from Spotify release_date (tracks: album year). */
+  release_year?: number | null;
 }
 
 export interface RatingDetail {

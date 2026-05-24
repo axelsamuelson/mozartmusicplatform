@@ -1,3 +1,4 @@
+import { playlistSortOrderLabel } from "@/lib/playlist/sortOrder";
 import { vibePresetById } from "@/lib/playlist/tempoIntensityPresets";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
 import { cn } from "@/lib/utils";
@@ -69,6 +70,25 @@ export function PlaylistFilterChips({
     });
   }
 
+  if (
+    playlist.filter_release_year_min != null ||
+    playlist.filter_release_year_max != null
+  ) {
+    const yMin = playlist.filter_release_year_min;
+    const yMax = playlist.filter_release_year_max;
+    chips.push({
+      key: "year",
+      label:
+        yMin != null && yMax != null
+          ? yMin === yMax
+            ? `${yMin}`
+            : `${yMin}–${yMax}`
+          : yMin != null
+            ? `≥${yMin}`
+            : `≤${yMax}`,
+    });
+  }
+
   if (playlist.filter_moments?.length) {
     chips.push({
       key: "moments",
@@ -83,6 +103,11 @@ export function PlaylistFilterChips({
     key: "score",
     label: `≥${playlist.filter_min_score}`,
     className: "border-wam/30 bg-wam/10 text-wam",
+  });
+
+  chips.push({
+    key: "sort",
+    label: playlistSortOrderLabel(playlist.sort_order),
   });
 
   if (chips.length === 0) return null;

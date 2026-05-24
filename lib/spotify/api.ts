@@ -1,3 +1,4 @@
+import { releaseYearFromSpotifyDate } from "@/lib/spotify/releaseYear";
 import { getSpotifyToken } from "@/lib/spotify/token";
 
 const API_BASE = "https://api.spotify.com/v1";
@@ -34,6 +35,7 @@ export interface CachedItemPayload {
   genres: string[] | null;
   /** Tracks only: first credited artist’s Spotify id. */
   primary_artist_id?: string | null;
+  release_year?: number | null;
 }
 
 interface SpotifyImage {
@@ -53,6 +55,7 @@ interface SpotifyAlbumRef {
   name: string;
   images: SpotifyImage[];
   genres?: string[];
+  release_date?: string;
 }
 
 interface SpotifyTrackSearch {
@@ -189,6 +192,7 @@ interface SpotifyAlbumFull {
   artists: SpotifyArtistRef[];
   images: SpotifyImage[];
   genres: string[];
+  release_date?: string;
 }
 
 interface SpotifyArtistFull {
@@ -228,6 +232,7 @@ export async function fetchSpotifyItem(
       preview_url: data.preview_url,
       genres: genresFromArtists(data.artists),
       primary_artist_id: data.artists?.[0]?.id ?? null,
+      release_year: releaseYearFromSpotifyDate(data.album?.release_date),
     };
   }
 
@@ -242,6 +247,7 @@ export async function fetchSpotifyItem(
       preview_url: null,
       genres: uniqueGenres(data.genres ?? []),
       primary_artist_id: null,
+      release_year: releaseYearFromSpotifyDate(data.release_date),
     };
   }
 

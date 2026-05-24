@@ -5,7 +5,12 @@ import { SPOTIFY_CIRCUIT_UNAVAILABLE_MSG } from "@/lib/spotify/rateLimiter";
 import { createSpotifyPlaylist } from "@/lib/spotify/userPlaylistSpotify";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
-import type { WamPlaylistRow } from "@/lib/types/playlists";
+import {
+  parsePlaylistFiltersInput,
+  playlistFiltersToDbColumns,
+} from "@/lib/playlist/playlistFilters";
+import { parsePlaylistSortOrder } from "@/lib/playlist/sortOrder";
+import type { PlaylistSortOrder, WamPlaylistRow } from "@/lib/types/playlists";
 
 /** Spotify create + DB insert can wait on Retry-After; avoid Vercel killing the function early. */
 export const maxDuration = 60;
@@ -24,13 +29,10 @@ type CreateBody = {
   filter_tempo_max?: number | null;
   filter_intensity_min?: number | null;
   filter_intensity_max?: number | null;
+  filter_release_year_min?: number | null;
+  filter_release_year_max?: number | null;
+  sort_order?: PlaylistSortOrder;
 };
-
-function clampScale1to10(n: unknown): number | null {
-  if (n == null) return null;
-  if (typeof n !== "number" || !Number.isFinite(n)) return null;
-  return Math.min(10, Math.max(1, Math.round(n)));
-}
 
 export async function GET() {
   const supabase = await createClient();
@@ -91,24 +93,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
 
-    const filter_genres = Array.isArray(body.filter_genres)
-      ? body.filter_genres.filter((x): x is string => typeof x === "string")
-      : [];
-    const filter_moments = Array.isArray(body.filter_moments)
-      ? body.filter_moments.filter((x): x is string => typeof x === "string")
-      : [];
-    const filter_vibes = Array.isArray(body.filter_vibes)
-      ? body.filter_vibes.filter((x): x is string => typeof x === "string")
-      : [];
-    const filter_tempo_min = clampScale1to10(body.filter_tempo_min);
-    const filter_tempo_max = clampScale1to10(body.filter_tempo_max);
-    const filter_intensity_min = clampScale1to10(body.filter_intensity_min);
-    const filter_intensity_max = clampScale1to10(body.filter_intensity_max);
-    const filter_min_score =
-      typeof body.filter_min_score === "number" &&
-      Number.isFinite(body.filter_min_score)
-        ? Math.max(0, Math.min(100, Math.round(body.filter_min_score)))
-        : 0;
+    const parsedFilters = parsePlaylistFiltersInput(body);
+    const sort_order =
+      parsePlaylistSortOrder(body.sort_order) ?? "recently_rated";
 
     console.log("Step 2: getting provider token");
     const {
@@ -217,18 +204,8 @@ export async function POST(request: NextRequest) {
     console.log("Step 3: Spotify playlist created", { playlistId });
 
     const filters = {
-      filter_genres: filter_genres.length ? filter_genres : null,
-      filter_moments: filter_moments.length ? filter_moments : null,
-      filter_vibes: filter_vibes.length ? filter_vibes : null,
-      filter_tempo_min:
-        filter_vibes.length === 0 ? filter_tempo_min : null,
-      filter_tempo_max:
-        filter_vibes.length === 0 ? filter_tempo_max : null,
-      filter_intensity_min:
-        filter_vibes.length === 0 ? filter_intensity_min : null,
-      filter_intensity_max:
-        filter_vibes.length === 0 ? filter_intensity_max : null,
-      filter_min_score,
+      ...playlistFiltersToDbColumns(parsedFilters),
+      sort_order,
     };
 
     console.log("Step 4: saving to wam_playlists");

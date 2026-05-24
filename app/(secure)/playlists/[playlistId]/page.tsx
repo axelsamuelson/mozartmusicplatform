@@ -3,34 +3,27 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
-import { PlaylistBuilder, type PlaylistFiltersState } from "@/components/PlaylistBuilder";
+import { PlaylistBuilder } from "@/components/PlaylistBuilder";
 import { PlaylistFilterChips } from "@/components/PlaylistFilterChips";
+import { PlaylistSortSelect } from "@/components/PlaylistSortSelect";
 import { PlaylistsSubnav } from "@/components/PlaylistsSubnav";
 import { TempoIntensityPills } from "@/components/TempoIntensityPills";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { summarizePlaylistFilters } from "@/lib/playlist/filterSummary";
+import {
+  filtersFromPlaylistRow,
+  filtersStateKey,
+  type PlaylistFiltersState,
+} from "@/lib/playlist/playlistFilters";
 import { glassCard, glassCardTight } from "@/lib/wamUi";
 import type { GenreTagRow, MomentTagRow, RatingDetail } from "@/lib/types/ratings";
-import type { WamPlaylistRow } from "@/lib/types/playlists";
+import type { PlaylistSortOrder, WamPlaylistRow } from "@/lib/types/playlists";
 import { cn } from "@/lib/utils";
-
-function filtersFromRow(row: WamPlaylistRow): PlaylistFiltersState {
-  return {
-    filter_genres: row.filter_genres ?? [],
-    filter_moments: row.filter_moments ?? [],
-    filter_min_score: row.filter_min_score,
-    filter_vibes: row.filter_vibes ?? [],
-    filter_tempo_min: row.filter_tempo_min ?? null,
-    filter_tempo_max: row.filter_tempo_max ?? null,
-    filter_intensity_min: row.filter_intensity_min ?? null,
-    filter_intensity_max: row.filter_intensity_max ?? null,
-  };
-}
 
 export default function PlaylistDetailPage() {
   const params = useParams();
@@ -38,13 +31,59 @@ export default function PlaylistDetailPage() {
   const playlistId = params.playlistId as string;
 
   const [playlist, setPlaylist] = useState<WamPlaylistRow | null>(null);
-  const [tracks, setTracks] = useState<RatingDetail[]>([]);
+  const [previewTracks, setPreviewTracks] = useState<RatingDetail[]>([]);
+  const [filters, setFilters] = useState<PlaylistFiltersState | null>(null);
+  const [savedFiltersKey, setSavedFiltersKey] = useState("");
+  const [sortOrder, setSortOrder] = useState<PlaylistSortOrder>("recently_rated");
+  const [savedSortOrder, setSavedSortOrder] = useState<PlaylistSortOrder>("recently_rated");
   const [genreTags, setGenreTags] = useState<GenreTagRow[]>([]);
   const [momentTags, setMomentTags] = useState<MomentTagRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [previewLoading, setPreviewLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const previewAbortRef = useRef<AbortController | null>(null);
+
+  const filtersDirty =
+    filters != null && filtersStateKey(filters) !== savedFiltersKey;
+  const sortDirty = sortOrder !== savedSortOrder;
+  const settingsDirty = filtersDirty || sortDirty;
+
+  const fetchPreview = useCallback(
+    async (f: PlaylistFiltersState, sort: PlaylistSortOrder) => {
+      previewAbortRef.current?.abort();
+      const ac = new AbortController();
+      previewAbortRef.current = ac;
+      setPreviewLoading(true);
+      try {
+        const res = await fetch(
+          `/api/playlists/${encodeURIComponent(playlistId)}/preview`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...f, sort_order: sort }),
+            signal: ac.signal,
+          },
+        );
+        const body = (await res.json()) as {
+          matched_tracks?: RatingDetail[];
+          error?: string;
+        };
+        if (!res.ok) throw new Error(body.error || "Preview failed");
+        if (!ac.signal.aborted) setPreviewTracks(body.matched_tracks ?? []);
+      } catch (e) {
+        if (e instanceof Error && e.name === "AbortError") return;
+        if (!ac.signal.aborted) {
+          toast.error(e instanceof Error ? e.message : "Could not preview tracks");
+        }
+      } finally {
+        if (!ac.signal.aborted) setPreviewLoading(false);
+      }
+    },
+    [playlistId],
+  );
 
   useEffect(() => {
     const ac = new AbortController();
@@ -73,8 +112,17 @@ export default function PlaylistDetailPage() {
       }),
     ])
       .then(([plBody, tags]) => {
-        setPlaylist(plBody.playlist ?? null);
-        setTracks(plBody.matched_tracks ?? []);
+        const pl = plBody.playlist ?? null;
+        setPlaylist(pl);
+        setPreviewTracks(plBody.matched_tracks ?? []);
+        if (pl) {
+          const f = filtersFromPlaylistRow(pl);
+          setFilters(f);
+          setSavedFiltersKey(filtersStateKey(f));
+          const order = pl.sort_order ?? "recently_rated";
+          setSortOrder(order);
+          setSavedSortOrder(order);
+        }
         setGenreTags(tags.genre_tags ?? []);
         setMomentTags(tags.moment_tags ?? []);
       })
@@ -87,6 +135,14 @@ export default function PlaylistDetailPage() {
       });
     return () => ac.abort();
   }, [playlistId]);
+
+  useEffect(() => {
+    if (!filters || loading) return;
+    const t = window.setTimeout(() => {
+      void fetchPreview(filters, sortOrder);
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [filters, sortOrder, loading, fetchPreview]);
 
   async function handleSync() {
     setSyncing(true);
@@ -101,13 +157,37 @@ export default function PlaylistDetailPage() {
       if (!res.ok) throw new Error(body.error || res.statusText);
       if (body.playlist) setPlaylist(body.playlist);
       toast.success("Synced to Spotify");
-      const ref = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`);
-      const rb = (await ref.json()) as { matched_tracks?: RatingDetail[] };
-      if (ref.ok && rb.matched_tracks) setTracks(rb.matched_tracks);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Sync failed");
     } finally {
       setSyncing(false);
+    }
+  }
+
+  async function handleSaveSettings() {
+    if (!filters) return;
+    setSaving(true);
+    try {
+      const res = await fetch(`/api/playlists/${encodeURIComponent(playlistId)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...filters, sort_order: sortOrder }),
+      });
+      const body = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        playlist?: WamPlaylistRow;
+        matched_tracks?: RatingDetail[];
+      };
+      if (!res.ok) throw new Error(body.error || "Could not save");
+      if (body.playlist) setPlaylist(body.playlist);
+      if (body.matched_tracks) setPreviewTracks(body.matched_tracks);
+      setSavedFiltersKey(filtersStateKey(filters));
+      setSavedSortOrder(sortOrder);
+      toast.success("Settings saved — sync to update Spotify");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not save");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -143,7 +223,7 @@ export default function PlaylistDetailPage() {
     );
   }
 
-  if (error || !playlist) {
+  if (error || !playlist || !filters) {
     return (
       <div className="mx-auto max-w-5xl space-y-6 px-4 pb-16 pt-24 md:px-6">
         <PlaylistsSubnav />
@@ -155,7 +235,6 @@ export default function PlaylistDetailPage() {
     );
   }
 
-  const filterReadOnly = filtersFromRow(playlist);
   const last =
     playlist.last_synced_at != null
       ? new Date(playlist.last_synced_at).toLocaleString()
@@ -198,7 +277,7 @@ export default function PlaylistDetailPage() {
             <Button
               type="button"
               onClick={handleSync}
-              disabled={syncing || deleting}
+              disabled={syncing || deleting || settingsDirty}
               className="rounded-full bg-wam font-semibold text-black hover:bg-wam/90"
             >
               {syncing ? "Syncing…" : "Sync to Spotify"}
@@ -217,36 +296,62 @@ export default function PlaylistDetailPage() {
       </div>
 
       <section className={cn("p-6", glassCard)}>
-        <h2 className="mb-1 text-sm font-semibold uppercase tracking-wider text-white/50">
-          Filters
-        </h2>
-        <p className="mb-4 text-xs text-white/45">
-          Applied on every sync. Edit by creating a new playlist with updated filters.
-        </p>
-        <PlaylistBuilder
-          genreTags={genreTags}
-          momentTags={momentTags}
-          value={filterReadOnly}
-          onChange={() => {}}
-          disabled
-        />
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-white/50">
+              Filters & sort
+            </h2>
+            <p className="mt-1 text-xs text-white/45">
+              Changes preview below automatically. Save, then sync to apply on Spotify.
+            </p>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!settingsDirty || saving}
+            onClick={() => void handleSaveSettings()}
+            className="rounded-full bg-wam text-black hover:bg-wam/90 disabled:opacity-40"
+          >
+            {saving ? "Saving…" : "Save settings"}
+          </Button>
+        </div>
+        <div className="flex flex-col gap-8">
+          <PlaylistBuilder
+            genreTags={genreTags}
+            momentTags={momentTags}
+            value={filters}
+            onChange={setFilters}
+            disabled={saving}
+          />
+          <PlaylistSortSelect
+            value={sortOrder}
+            onChange={setSortOrder}
+            disabled={saving}
+          />
+        </div>
+        {settingsDirty ? (
+          <p className="mt-4 text-xs text-amber-200/80">
+            Unsaved changes — save before syncing to Spotify.
+          </p>
+        ) : null}
       </section>
 
       <section className={cn("p-6", glassCard)}>
         <h2 className="mb-4 text-sm font-semibold uppercase tracking-wider text-white/50">
-          Matching tracks ({tracks.length})
+          Matching tracks ({previewLoading ? "…" : previewTracks.length})
         </h2>
         <ul className="flex flex-col gap-2">
-          {tracks.length === 0 ? (
+          {previewTracks.length === 0 && !previewLoading ? (
             <li className="rounded-xl border border-dashed border-white/10 px-4 py-8 text-center text-sm text-white/50">
-              No tracks match these filters yet. Rate more tracks with tempo and
-              intensity, then sync.
+              No tracks match these filters. Open tracks from search once to refresh release
+              year metadata, then try again.
             </li>
           ) : (
-            tracks.map((t) => {
+            previewTracks.map((t) => {
               const title = t.item?.name ?? t.spotify_id;
               const artist = t.item?.artist_name;
               const imageUrl = t.item?.image_url;
+              const year = t.item?.release_year;
               return (
                 <li
                   key={t.id}
@@ -275,9 +380,14 @@ export default function PlaylistDetailPage() {
                       {title}
                     </Link>
                     {artist ? (
-                      <p className="truncate text-xs text-white/45">{artist}</p>
+                      <p className="truncate text-xs text-white/45">
+                        {artist}
+                        {year != null ? ` · ${year}` : ""}
+                      </p>
+                    ) : year != null ? (
+                      <p className="text-xs text-white/45">{year}</p>
                     ) : null}
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
+                    <div className="mt-1">
                       <TempoIntensityPills tempo={t.tempo} intensity={t.intensity} />
                     </div>
                   </div>

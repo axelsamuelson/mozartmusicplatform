@@ -74,6 +74,8 @@ export type ActiveLiveSessionRef = {
   jamsEnabled?: boolean;
   jukeboxEnabled?: boolean;
   isActive?: boolean;
+  /** Dev simulate mode — skip Spotify host sync. */
+  simulated?: boolean;
 };
 
 export type PlaylistSyncStatus = "ready" | "loading" | "error";

@@ -1,3 +1,4 @@
+import { playlistSortOrderLabel } from "@/lib/playlist/sortOrder";
 import { vibePresetById } from "@/lib/playlist/tempoIntensityPresets";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
 
@@ -58,6 +59,20 @@ export function summarizePlaylistFilters(row: WamPlaylistRow): string {
       );
     }
   }
+  if (
+    row.filter_release_year_min != null ||
+    row.filter_release_year_max != null
+  ) {
+    const yMin = row.filter_release_year_min;
+    const yMax = row.filter_release_year_max;
+    if (yMin != null && yMax != null) {
+      parts.push(yMin === yMax ? `${yMin}` : `${yMin}–${yMax}`);
+    } else if (yMin != null) {
+      parts.push(`from ${yMin}`);
+    } else if (yMax != null) {
+      parts.push(`until ${yMax}`);
+    }
+  }
   if (row.filter_moments?.length) {
     parts.push(
       row.filter_moments.length <= 2
@@ -66,5 +81,6 @@ export function summarizePlaylistFilters(row: WamPlaylistRow): string {
     );
   }
   parts.push(`Min score ${row.filter_min_score}`);
+  parts.push(playlistSortOrderLabel(row.sort_order));
   return parts.join(" · ");
 }

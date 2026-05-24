@@ -27,7 +27,7 @@ async function loadCachedItemFromDb(
   const { data } = await supabase
     .from("cached_items")
     .select(
-      "spotify_id, type, name, artist_name, image_url, preview_url, genres, primary_artist_id, cached_at",
+      "spotify_id, type, name, artist_name, image_url, preview_url, genres, primary_artist_id, release_year, cached_at",
     )
     .eq("spotify_id", spotifyId)
     .maybeSingle();
@@ -123,6 +123,7 @@ export async function GET(
         preview_url: payload.preview_url,
         genres: payload.genres,
         primary_artist_id: payload.primary_artist_id ?? null,
+        release_year: payload.release_year ?? null,
         cached_at: now,
       },
       { onConflict: "spotify_id" },

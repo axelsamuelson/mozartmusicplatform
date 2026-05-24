@@ -1,12 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import {
+  loadMatchedPlaylistTracks,
+  wamPlaylistFiltersFromRow,
+} from "@/lib/playlist/loadMatchedTracks";
+import {
   playlistNeedsResyncForRating,
-  ratingMatchesPlaylistFilters,
   trackUrisFromRatings,
   type WamPlaylistFilters,
 } from "@/lib/playlist/matchRating";
-import { loadAllUserRatings } from "@/lib/ratings/normalize";
 import { assertWamOwned } from "@/lib/spotify/playlistGuard";
 import { replacePlaylistTracks } from "@/lib/spotify/userPlaylistSpotify";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
@@ -14,17 +16,7 @@ import type { RatingDetail } from "@/lib/types/ratings";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
 
 function filtersFromRow(pl: WamPlaylistRow): WamPlaylistFilters {
-  return {
-    filter_genres: pl.filter_genres,
-    filter_mood_levels: pl.filter_mood_levels,
-    filter_moments: pl.filter_moments,
-    filter_min_score: pl.filter_min_score,
-    filter_vibes: pl.filter_vibes ?? null,
-    filter_tempo_min: pl.filter_tempo_min ?? null,
-    filter_tempo_max: pl.filter_tempo_max ?? null,
-    filter_intensity_min: pl.filter_intensity_min ?? null,
-    filter_intensity_max: pl.filter_intensity_max ?? null,
-  };
+  return wamPlaylistFiltersFromRow(pl);
 }
 
 /** Push all matching rated tracks to one WAM playlist on Spotify. */
@@ -36,10 +28,8 @@ export async function syncWamPlaylistToSpotify(
 ): Promise<{ track_count: number }> {
   await assertWamOwned(pl.spotify_playlist_id, userId);
 
-  const filters = filtersFromRow(pl);
-  const ratings = await loadAllUserRatings(supabase, userId);
-  const matched = ratings.filter((r) => ratingMatchesPlaylistFilters(r, filters));
-  const uris = trackUrisFromRatings(matched);
+  const sorted = await loadMatchedPlaylistTracks(supabase, userId, pl);
+  const uris = trackUrisFromRatings(sorted);
 
   await replacePlaylistTracks(accessToken, pl.spotify_playlist_id, uris);
 

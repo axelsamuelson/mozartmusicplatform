@@ -29,6 +29,11 @@ import { useLiveQueueAutoAdvance } from "@/lib/live/useLiveQueueAutoAdvance";
 import { useLiveSessionHostSync } from "@/lib/live/useLiveSessionHostSync";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
+import {
+  registerAuditClientProvider,
+  unregisterAuditClientProvider,
+} from "@/lib/audit/auditBridge";
+import { buildClientAuditSnapshot } from "@/lib/audit/useAuditCollector";
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import { createClient } from "@/lib/supabase/client";
 import { emptyPlayback, sdkStateToPlayback } from "@/lib/playback/mappers";
@@ -41,6 +46,7 @@ import {
   disconnectPlayback,
   getCurrentState,
   getPlaybackVolume,
+  isPlaybackDeviceReady,
   next,
   pause,
   previous,
@@ -145,6 +151,17 @@ export function Player() {
   });
   const hostSyncTriggerRef = useRef<() => void>(() => {});
   const refreshAfterTransportRef = useRef<() => Promise<void>>(async () => {});
+  const playerMountRef = useRef(0);
+  const auditCollectorRef = useRef({
+    hasUser: false,
+    hasToken: false,
+    playbackReady: false,
+    connectError: null as string | null,
+    skipApiPoll: false,
+    hostSyncEnabled: false,
+    queueAutoAdvanceEnabled: false,
+    playback: null as PlaybackState | null,
+  });
 
   const {
     playback,
@@ -248,6 +265,7 @@ export function Player() {
   );
 
   useEffect(() => {
+    const mountId = ++playerMountRef.current;
     const supabase = createClient();
 
     async function fetchPlaybackToken(): Promise<string | null> {
@@ -308,6 +326,27 @@ export function Player() {
 
       try {
         setConnectError(null);
+        if (isPlaybackDeviceReady()) {
+          setPlaybackReady(true);
+          try {
+            const v = await getPlaybackVolume();
+            setVolumePct(Math.round(v * 100));
+          } catch {
+            /* keep default */
+          }
+          const s = await getCurrentState();
+          if (s) {
+            const mapped = sdkStateToPlayback(s);
+            if (mapped) {
+              applyPlayback(mapped);
+            } else if (!shouldSkipPlaybackApiPoll(getActiveLiveSession(), user.id)) {
+              await fetchApiPlayback();
+            }
+          } else if (!shouldSkipPlaybackApiPoll(getActiveLiveSession(), user.id)) {
+            await fetchApiPlayback();
+          }
+          return;
+        }
         await connectPlayback();
         setPlaybackReady(true);
         try {
@@ -369,9 +408,32 @@ export function Player() {
     return () => {
       subscription.unsubscribe();
       unregisterPlaybackTokenProvider();
-      disconnectPlayback();
+      const unmountId = mountId;
+      window.setTimeout(() => {
+        if (playerMountRef.current === unmountId) {
+          disconnectPlayback();
+        }
+      }, 150);
     };
   }, [applyPlayback, fetchApiPlayback, refreshLiveSessionPolling]);
+
+  auditCollectorRef.current = {
+    hasUser,
+    hasToken,
+    playbackReady,
+    connectError,
+    skipApiPoll,
+    hostSyncEnabled,
+    queueAutoAdvanceEnabled,
+    playback,
+  };
+
+  useEffect(() => {
+    registerAuditClientProvider(() =>
+      buildClientAuditSnapshot(auditCollectorRef.current),
+    );
+    return () => unregisterAuditClientProvider();
+  }, []);
 
   const fromSdk = playback?.source === "sdk";
   const hasAnyTrack = Boolean(playback?.trackId);

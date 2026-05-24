@@ -16,6 +16,8 @@ export interface WamPlaylistFilters {
   filter_tempo_max: number | null;
   filter_intensity_min: number | null;
   filter_intensity_max: number | null;
+  filter_release_year_min: number | null;
+  filter_release_year_max: number | null;
 }
 
 export function ratingMatchesPlaylistFilters(
@@ -49,6 +51,14 @@ export function ratingMatchesPlaylistFilters(
     }
   } else if (f.filter_mood_levels?.length) {
     if (!r.mood || !f.filter_mood_levels.includes(r.mood.level)) return false;
+  }
+
+  const year = r.item?.release_year ?? null;
+  if (f.filter_release_year_min != null) {
+    if (year == null || year < f.filter_release_year_min) return false;
+  }
+  if (f.filter_release_year_max != null) {
+    if (year == null || year > f.filter_release_year_max) return false;
   }
 
   return true;

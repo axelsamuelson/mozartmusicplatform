@@ -4,10 +4,10 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ListMusic, Plus, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 
-import {
-  PlaylistBuilder,
-  type PlaylistFiltersState,
-} from "@/components/PlaylistBuilder";
+import { PlaylistBuilder } from "@/components/PlaylistBuilder";
+import { emptyPlaylistFilters } from "@/lib/playlist/playlistFilters";
+import type { PlaylistFiltersState } from "@/lib/playlist/playlistFilters";
+import { PlaylistSortSelect } from "@/components/PlaylistSortSelect";
 import { PlaylistCard } from "@/components/PlaylistCard";
 import { PlaylistsSubnav } from "@/components/PlaylistsSubnav";
 import { Button } from "@/components/ui/button";
@@ -23,20 +23,9 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { capRetryAfterSec } from "@/lib/spotify/errors";
 import type { GenreTagRow, MomentTagRow } from "@/lib/types/ratings";
-import type { WamPlaylistRow } from "@/lib/types/playlists";
+import type { PlaylistSortOrder, WamPlaylistRow } from "@/lib/types/playlists";
 import { glassCard, glassCardTight } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
-
-const emptyFilters = (): PlaylistFiltersState => ({
-  filter_genres: [],
-  filter_moments: [],
-  filter_min_score: 0,
-  filter_vibes: [],
-  filter_tempo_min: null,
-  filter_tempo_max: null,
-  filter_intensity_min: null,
-  filter_intensity_max: null,
-});
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -50,7 +39,8 @@ export default function PlaylistsPage() {
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
-  const [filters, setFilters] = useState<PlaylistFiltersState>(emptyFilters);
+  const [filters, setFilters] = useState<PlaylistFiltersState>(emptyPlaylistFilters);
+  const [sortOrder, setSortOrder] = useState<PlaylistSortOrder>("recently_rated");
   const [creating, setCreating] = useState(false);
   const createInFlightRef = useRef(false);
 
@@ -114,6 +104,9 @@ export default function PlaylistsPage() {
         filter_intensity_min: filters.filter_intensity_min,
         filter_intensity_max: filters.filter_intensity_max,
         filter_min_score: filters.filter_min_score,
+        filter_release_year_min: filters.filter_release_year_min,
+        filter_release_year_max: filters.filter_release_year_max,
+        sort_order: sortOrder,
       }),
       signal,
     });
@@ -177,7 +170,8 @@ export default function PlaylistsPage() {
       toast.success("Playlist created — use Sync to push tracks to Spotify");
       setOpen(false);
       setName("");
-      setFilters(emptyFilters());
+      setFilters(emptyPlaylistFilters());
+      setSortOrder("recently_rated");
     } catch (e) {
       toast.dismiss(loadingToastId);
       if (e instanceof Error && e.name === "AbortError") {
@@ -260,6 +254,11 @@ export default function PlaylistsPage() {
                   momentTags={momentTags}
                   value={filters}
                   onChange={setFilters}
+                  disabled={creating}
+                />
+                <PlaylistSortSelect
+                  value={sortOrder}
+                  onChange={setSortOrder}
                   disabled={creating}
                 />
               </div>

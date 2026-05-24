@@ -10,6 +10,7 @@ import {
   sdkStateToPlayback,
 } from "@/lib/playback/mappers";
 import { getCurrentProgressMs } from "@/lib/playback/progress";
+import { setLastPlaybackCircuitHeader } from "@/lib/audit/playbackHints";
 import { startPollLeaderHeartbeat } from "@/lib/playback/pollLeader";
 import type { PlaybackApiPayload, PlaybackState } from "@/lib/playback/types";
 import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
@@ -204,6 +205,7 @@ export function useUnifiedPlayback(options: {
     try {
       const res = await fetch("/api/spotify/playback", { cache: "no-store" });
       const circuit = res.headers.get("X-WAM-Circuit");
+      setLastPlaybackCircuitHeader(circuit);
       if (circuit === "open") {
         return;
       }

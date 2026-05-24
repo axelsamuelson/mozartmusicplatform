@@ -6,7 +6,12 @@ import {
 } from "@/lib/live/activeSessionStorage";
 import { shouldSkipHostPlaybackSync } from "@/lib/live/sessionMode";
 
-export function activeLiveSessionRefFromRow(session: LiveSessionRow): ActiveLiveSessionRef {
+export function activeLiveSessionRefFromRow(
+  session: LiveSessionRow,
+  opts?: { simulated?: boolean },
+): ActiveLiveSessionRef {
+  const simulated =
+    opts?.simulated ?? session.device_name === "[simulated]";
   return {
     sessionId: session.id,
     code: session.code,
@@ -15,6 +20,7 @@ export function activeLiveSessionRefFromRow(session: LiveSessionRow): ActiveLive
     jamsEnabled: session.jams_enabled ?? false,
     jukeboxEnabled: session.jukebox_enabled ?? false,
     isActive: session.is_active ?? false,
+    simulated: simulated || undefined,
   };
 }
 
@@ -83,6 +89,7 @@ export function shouldEnableLiveSessionHostSync(
   currentUserId: string | null,
 ): boolean {
   if (!active || !currentUserId) return false;
+  if (active.simulated) return false;
   if (active.hostUserId !== currentUserId) return false;
   return !shouldSkipHostPlaybackSync({
     jams_enabled: Boolean(active.jamsEnabled),
