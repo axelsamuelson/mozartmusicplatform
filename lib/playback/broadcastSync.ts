@@ -1,3 +1,4 @@
+import { getPlaybackTabId } from "@/lib/playback/pollLeader";
 import type { PlaybackState } from "@/lib/playback/types";
 
 const CHANNEL_NAME = "wam-playback-sync";
@@ -15,7 +16,12 @@ export function getPlaybackChannel(): BroadcastChannel | null {
 export function broadcastPlayback(state: PlaybackState): void {
   const ch = getPlaybackChannel();
   if (!ch) return;
-  ch.postMessage({ type: "playback", state, at: Date.now() });
+  ch.postMessage({
+    type: "playback",
+    state,
+    at: Date.now(),
+    tabId: getPlaybackTabId(),
+  });
 }
 
 export function subscribeToPlayback(
@@ -25,9 +31,9 @@ export function subscribeToPlayback(
   if (!ch) return () => {};
 
   const handler = (e: MessageEvent) => {
-    if (e.data?.type === "playback" && e.data.state) {
-      cb(e.data.state as PlaybackState);
-    }
+    if (e.data?.type !== "playback" || !e.data.state) return;
+    if (e.data.tabId === getPlaybackTabId()) return;
+    cb(e.data.state as PlaybackState);
   };
   ch.addEventListener("message", handler);
   return () => ch.removeEventListener("message", handler);

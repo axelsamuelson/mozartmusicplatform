@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+import { debounce } from "@/lib/utils/debounce";
 
 import { useUserActivity } from "@/hooks/useUserActivity";
 import { broadcastPlayback, subscribeToPlayback } from "@/lib/playback/broadcastSync";
@@ -27,6 +29,8 @@ const ACTIVE_POLL_CAP_MS = 3_000;
 /** Early polls to detect external-device track changes. */
 const EARLY_SKIP_MS = [2_000, 6_000, 15_000] as const;
 const TRANSPORT_POLL_DELAYS_MS = [500, 1_500, 3_000] as const;
+/** Cap React re-renders from progress interpolation (~4 fps). */
+const DISPLAY_PROGRESS_MIN_INTERVAL_MS = 250;
 
 function isSdkPrimary(state: PlaybackState | null): boolean {
   return state?.source === "sdk" && Boolean(state.trackId);
@@ -55,6 +59,13 @@ export function useUnifiedPlayback(options: {
   const isUserActive = useUserActivity();
   const onTrackChangedRef = useRef(onTrackChanged);
   onTrackChangedRef.current = onTrackChanged;
+  const notifyTrackChanged = useMemo(
+    () =>
+      debounce(() => {
+        onTrackChangedRef.current?.();
+      }, 800),
+    [],
+  );
 
   const [playback, setPlayback] = useState<PlaybackState | null>(null);
   const [displayProgressMs, setDisplayProgressMs] = useState(0);
@@ -102,7 +113,7 @@ export function useUnifiedPlayback(options: {
       }
       if (next.trackId !== prevTrackIdRef.current) {
         prevTrackIdRef.current = next.trackId;
-        onTrackChangedRef.current?.();
+        notifyTrackChanged();
       }
       playbackRef.current = next;
       setPlayback(next);
@@ -305,13 +316,13 @@ export function useUnifiedPlayback(options: {
       setDisplayProgressMs(getCurrentProgressMs(remote));
       if (remote.trackId !== prevTrackIdRef.current) {
         prevTrackIdRef.current = remote.trackId;
-        onTrackChangedRef.current?.();
+        notifyTrackChanged();
       }
       if (remote.source === "api" && isLeaderRef.current) {
         scheduleApiFetch(remote);
       }
     });
-  }, [enabled, scheduleApiFetch]);
+  }, [enabled, notifyTrackChanged, scheduleApiFetch]);
 
   // SDK events
   useEffect(() => {
@@ -333,14 +344,7 @@ export function useUnifiedPlayback(options: {
     if (isSdkPrimary(playbackRef.current)) return;
     void fetchApiPlayback();
     return () => clearTimers();
-  }, [
-    clearTimers,
-    enabled,
-    fetchApiPlayback,
-    hasToken,
-    playbackReady,
-    skipApiPoll,
-  ]);
+  }, [clearTimers, enabled, fetchApiPlayback, hasToken, skipApiPoll]);
 
   // Visibility
   useEffect(() => {
@@ -367,23 +371,38 @@ export function useUnifiedPlayback(options: {
     scheduleEarlySkipChecks,
   ]);
 
-  // Progress RAF (every frame)
+  // Progress interpolation — throttled setState to avoid re-rendering Player at 60fps
   useEffect(() => {
-    if (!playback) {
+    const current = playbackRef.current;
+    if (!current?.trackId) {
       setDisplayProgressMs(0);
       return;
     }
+
+    setDisplayProgressMs(getCurrentProgressMs(current));
+    if (!current.isPlaying) return;
+
     let raf = 0;
+    let lastUiUpdate = 0;
     const tick = () => {
-      const current = playbackRef.current;
-      if (current) {
-        setDisplayProgressMs(getCurrentProgressMs(current));
+      const state = playbackRef.current;
+      if (!state?.isPlaying) return;
+      const now = Date.now();
+      if (now - lastUiUpdate >= DISPLAY_PROGRESS_MIN_INTERVAL_MS) {
+        lastUiUpdate = now;
+        setDisplayProgressMs(getCurrentProgressMs(state));
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playback]);
+  }, [
+    playback?.trackId,
+    playback?.isPlaying,
+    playback?.progressMsAtSync,
+    playback?.syncedAt,
+    playback?.durationMs,
+  ]);
 
   return {
     playback,

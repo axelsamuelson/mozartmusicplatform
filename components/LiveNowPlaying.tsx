@@ -44,8 +44,13 @@ export function LiveNowPlaying({ session, className }: LiveNowPlayingProps) {
     if (!session.is_playing || !session.spotify_track_id) return;
 
     let raf = 0;
+    let lastUiUpdate = 0;
     const tick = () => {
-      setSmoothProgress(interpolatedProgressMs(sessionRef.current));
+      const now = Date.now();
+      if (now - lastUiUpdate >= 250) {
+        lastUiUpdate = now;
+        setSmoothProgress(interpolatedProgressMs(sessionRef.current));
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);

@@ -151,6 +151,7 @@ export function Player() {
   });
   const hostSyncTriggerRef = useRef<() => void>(() => {});
   const refreshAfterTransportRef = useRef<() => Promise<void>>(async () => {});
+  const lastRefreshAfterTransportAtRef = useRef(0);
   const playerMountRef = useRef(0);
   const auditCollectorRef = useRef({
     hasUser: false,
@@ -178,12 +179,19 @@ export function Player() {
     onTrackChanged: () => hostSyncTriggerRef.current(),
   });
 
-  refreshAfterTransportRef.current = refreshAfterTransport;
+  const refreshAfterTransportThrottled = useCallback(async () => {
+    const now = Date.now();
+    if (now - lastRefreshAfterTransportAtRef.current < 1_200) return;
+    lastRefreshAfterTransportAtRef.current = now;
+    await refreshAfterTransport();
+  }, [refreshAfterTransport]);
+
+  refreshAfterTransportRef.current = refreshAfterTransportThrottled;
 
   const { triggerImmediateSync } = useLiveSessionHostSync({
     enabled: hasUser && hasToken && hostSyncEnabled,
     onTrackChanged: () => {
-      void refreshAfterTransportRef.current();
+      void refreshAfterTransportThrottled();
     },
   });
 
@@ -257,7 +265,12 @@ export function Player() {
     };
     window.addEventListener("wam-live-session-changed", onSessionChange);
     return () => window.removeEventListener("wam-live-session-changed", onSessionChange);
-  }, [currentUserId, fetchApiPlayback, refreshAfterTransport, refreshLiveSessionPolling]);
+  }, [
+    currentUserId,
+    fetchApiPlayback,
+    refreshAfterTransportThrottled,
+    refreshLiveSessionPolling,
+  ]);
 
   const lastSyncedUserIdRef = useRef<string | null>(null);
   const syncSessionRef = useRef<(authSession: Session | null) => Promise<void>>(

@@ -12,6 +12,7 @@ import { createClient } from "@/lib/supabase/client";
 /** Host live sync — pushes Spotify state into live_sessions for participants. */
 const SYNC_INTERVAL_BASE_MS = 8_000;
 const SYNC_INTERVAL_MAX_MS = 20_000;
+const IMMEDIATE_SYNC_COOLDOWN_MS = 1_500;
 
 export type LiveSessionHostSyncOptions = {
   enabled: boolean;
@@ -36,6 +37,7 @@ export function useLiveSessionHostSync(
   const onTrackChangedRef = useRef(onTrackChanged);
   onTrackChangedRef.current = onTrackChanged;
   const triggerImmediateSyncRef = useRef<() => void>(() => {});
+  const lastImmediateSyncAtRef = useRef(0);
 
   useEffect(() => {
     if (!enabled) return;
@@ -127,6 +129,11 @@ export function useLiveSessionHostSync(
 
     triggerImmediateSyncRef.current = () => {
       if (cancelled) return;
+      const now = Date.now();
+      if (now - lastImmediateSyncAtRef.current < IMMEDIATE_SYNC_COOLDOWN_MS) {
+        return;
+      }
+      lastImmediateSyncAtRef.current = now;
       if (timeoutId) clearTimeout(timeoutId);
       timeoutId = null;
       void syncPlayback(true).then((trackJustChanged) => {

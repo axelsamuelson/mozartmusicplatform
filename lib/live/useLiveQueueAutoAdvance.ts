@@ -107,7 +107,7 @@ export function useLiveQueueAutoAdvance(
     };
 
     tick();
-    const id = window.setInterval(tick, 1000);
+    const id = window.setInterval(tick, 2_000);
     return () => window.clearInterval(id);
   }, [enabled, advancing, session?.spotify_track_id, session?.current_queue_id, session?.duration_ms, session?.is_playing, session?.playback_updated_at, playback?.trackId, playback?.durationMs, playback?.isPlaying, playback?.syncedAt]);
 }
