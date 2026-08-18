@@ -118,6 +118,11 @@ export function spotifyUri(type: ItemType, spotifyId: string): string {
   return `spotify:${type}:${spotifyId}`;
 }
 
+export function spotifyItemHref(type: ItemType, spotifyId: string): string {
+  if (type === "artist") return `/artist/${encodeURIComponent(spotifyId)}`;
+  return `/item/${encodeURIComponent(spotifyId)}?type=${type}`;
+}
+
 export function registerPlaybackTokenProvider(provider: AccessTokenProvider): void {
   tokenProvider = provider;
 }

@@ -16,6 +16,7 @@ export const SPOTIFY_CACHE_TTL = {
   playback: 2,
   search: 300,
   item: 86_400,
+  artistCatalog: 86_400,
   playlistMeta: 3600,
   playlistTracks: 86_400,
   userPlaylists: 120,

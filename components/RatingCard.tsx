@@ -13,7 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import type { RatingDetail } from "@/lib/types/ratings";
-import { play, spotifyUri } from "@/lib/spotify/player";
+import { play, spotifyItemHref, spotifyUri } from "@/lib/spotify/player";
 import { glassCardTight } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +30,7 @@ export function RatingCard({ rating, className, onRatingUpdated }: RatingCardPro
   const artist = item?.artist_name ?? null;
   const imageUrl = item?.image_url ?? null;
   const type = item?.type ?? "track";
-  const href = `/item/${rating.spotify_id}?type=${type}`;
+  const href = spotifyItemHref(type, rating.spotify_id);
   const uri = spotifyUri(type, rating.spotify_id);
 
   const [completeOpen, setCompleteOpen] = useState(false);

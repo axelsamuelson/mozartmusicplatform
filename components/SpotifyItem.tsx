@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import type { ItemType } from "@/lib/spotify/api";
-import { play, spotifyUri } from "@/lib/spotify/player";
+import { play, spotifyItemHref, spotifyUri } from "@/lib/spotify/player";
 import { glassCardTight } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 
@@ -118,8 +118,8 @@ export function SpotifyItem({ className, ...props }: SpotifyItemProps) {
           size="sm"
           className="rounded-full bg-wam px-4 font-medium text-white shadow-md transition-all duration-300 hover:scale-105 hover:bg-wam/90 hover:text-white hover:shadow-lg"
         >
-          <Link href={`/item/${props.spotify_id}?type=${props.type}`}>
-            Rate
+          <Link href={spotifyItemHref(props.type, props.spotify_id)}>
+            {props.type === "artist" ? "View" : "Rate"}
           </Link>
         </Button>
       </div>

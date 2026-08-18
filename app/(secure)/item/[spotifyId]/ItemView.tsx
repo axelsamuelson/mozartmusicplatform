@@ -3,12 +3,16 @@
 import Image from "next/image";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useSearchParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
+import { Play } from "lucide-react";
+import { toast } from "sonner";
 
 import { RatingForm } from "@/components/RatingForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { userFacingFetchError } from "@/lib/http/fetchRetry";
+import { play, spotifyUri } from "@/lib/spotify/player";
 import { glassCardTight, glassPanel, pageHeading, pageSub, sectionHeading } from "@/lib/wamUi";
 import type { ItemType } from "@/lib/spotify/api";
 import type {
@@ -18,7 +22,7 @@ import type {
   RatingDetail,
 } from "@/lib/types/ratings";
 
-const ALLOWED_TYPES: ItemType[] = ["track", "album", "artist"];
+const ALLOWED_TYPES: ItemType[] = ["track", "album"];
 
 type CachedRow = {
   spotify_id: string;
@@ -36,6 +40,7 @@ function typeLabel(t: ItemType): string {
 
 export function ItemView() {
   const params = useParams();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const spotifyId = params.spotifyId as string;
   const typeRaw = searchParams.get("type");
@@ -43,6 +48,12 @@ export function ItemView() {
     typeRaw && (ALLOWED_TYPES as readonly string[]).includes(typeRaw)
       ? (typeRaw as ItemType)
       : null;
+
+  useEffect(() => {
+    if (typeRaw === "artist" && spotifyId) {
+      router.replace(`/artist/${spotifyId}`);
+    }
+  }, [typeRaw, spotifyId, router]);
 
   const [item, setItem] = useState<CachedRow | null>(null);
   const [itemError, setItemError] = useState<string | null>(null);
@@ -56,8 +67,14 @@ export function ItemView() {
 
   const [rating, setRating] = useState<RatingDetail | null>(null);
   const [ratingLoading, setRatingLoading] = useState(false);
+  const [playing, setPlaying] = useState(false);
 
   useEffect(() => {
+    if (typeRaw === "artist") {
+      setItemLoading(true);
+      setItemError(null);
+      return;
+    }
     if (!spotifyId || !type) {
       setItemLoading(false);
       setItemError(
@@ -93,7 +110,7 @@ export function ItemView() {
       });
 
     return () => ac.abort();
-  }, [spotifyId, type]);
+  }, [spotifyId, type, typeRaw]);
 
   useEffect(() => {
     if (!spotifyId || !type || itemLoading || itemError || !item) return;
@@ -154,6 +171,18 @@ export function ItemView() {
     setRating(null);
   }, []);
 
+  async function handlePlay() {
+    if (!item || playing) return;
+    setPlaying(true);
+    try {
+      await play(spotifyUri(item.type, item.spotify_id));
+    } catch (e) {
+      toast.error(userFacingFetchError(e, "Could not start playback. Try again."));
+    } finally {
+      setPlaying(false);
+    }
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-10 px-4 pb-16 pt-24 md:px-6">
       <Button
@@ -194,6 +223,15 @@ export function ItemView() {
               {item.artist_name ? (
                 <p className={pageSub}>{item.artist_name}</p>
               ) : null}
+              <Button
+                type="button"
+                disabled={playing}
+                onClick={() => void handlePlay()}
+                className="mt-3 rounded-full bg-wam px-5 font-semibold text-black hover:bg-wam/90"
+              >
+                <Play className="size-4 fill-current" aria-hidden />
+                {playing ? "Starting…" : item.type === "track" ? "Play" : "Play on Spotify"}
+              </Button>
             </div>
           </header>
 

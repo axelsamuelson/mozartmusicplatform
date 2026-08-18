@@ -16,6 +16,7 @@ import type {
   TopItem,
 } from "@/lib/profile/aggregateRatings";
 import type { MoodTagRow } from "@/lib/types/ratings";
+import { spotifyItemHref } from "@/lib/spotify/player";
 import { cn } from "@/lib/utils";
 
 type OverviewPayload = {
@@ -65,7 +66,7 @@ function TopList({
                 <div className="min-w-0 flex-1">
                   {it.spotify_id ? (
                     <Link
-                      href={`/item/${encodeURIComponent(it.spotify_id)}?type=${type}`}
+                      href={spotifyItemHref(type, it.spotify_id)}
                       className="font-medium text-white transition-colors hover:text-wam hover:underline"
                     >
                       {it.name}
@@ -77,9 +78,18 @@ function TopList({
                     <p className="truncate text-xs text-white/50">{it.artist}</p>
                   ) : null}
                 </div>
-                <span className="shrink-0 text-xs font-bold tabular-nums text-wam">
-                  {it.score}
-                </span>
+                <div className="shrink-0 text-right">
+                  <span className="text-xs font-bold tabular-nums text-wam">
+                    {it.score}
+                  </span>
+                  {type === "artist" && it.track_count != null ? (
+                    <p className="text-[10px] tabular-nums text-white/40">
+                      {it.rated_count != null && it.rated_count > it.track_count
+                        ? `${it.track_count} of ${it.rated_count} tracks`
+                        : `${it.track_count} ${it.track_count === 1 ? "track" : "tracks"}`}
+                    </p>
+                  ) : null}
+                </div>
               </li>
             ))
           )}

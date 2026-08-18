@@ -6,6 +6,10 @@ export interface TopItem {
   name: string;
   artist: string | null;
   score: number;
+  /** Tracks included in the artist score (up to five highest). */
+  track_count?: number;
+  /** Total rated tracks for this artist. */
+  rated_count?: number;
 }
 
 export interface ActivityMonth {
@@ -50,9 +54,47 @@ function monthLabel(key: string): string {
 const TOP_TRACK_SCORES_PER_ARTIST = 5;
 
 /** First credited artist from Spotify-style "A, B, C" artist string. */
-function firstCreditedArtistName(artistName: string | null | undefined): string | null {
+export function firstCreditedArtistName(
+  artistName: string | null | undefined,
+): string | null {
   if (!artistName?.trim()) return null;
   return artistName.split(",")[0]?.trim() ?? null;
+}
+
+/** Track ratings that belong to this artist (primary id, else first credited name). */
+export function isTrackRatingForArtist(
+  rating: RatingDetail,
+  artistId: string,
+  artistName: string,
+): boolean {
+  if (rating.item?.type !== "track") return false;
+  const aid = rating.item.primary_artist_id?.trim();
+  if (aid) return aid === artistId;
+  const credit = firstCreditedArtistName(rating.item.artist_name);
+  return Boolean(
+    credit && credit.toLowerCase() === artistName.trim().toLowerCase(),
+  );
+}
+
+export function artistScoreFromTrackRatings(ratings: RatingDetail[]): {
+  score: number | null;
+  track_count: number;
+  rated_count: number;
+} {
+  const scores = ratings
+    .filter((r) => typeof r.score === "number" && Number.isFinite(r.score))
+    .map((r) => r.score)
+    .sort((a, b) => b - a);
+  if (scores.length === 0) {
+    return { score: null, track_count: 0, rated_count: 0 };
+  }
+  const used = scores.slice(0, TOP_TRACK_SCORES_PER_ARTIST);
+  const sum = used.reduce((s, x) => s + x, 0);
+  return {
+    score: Math.round(sum / used.length),
+    track_count: used.length,
+    rated_count: scores.length,
+  };
 }
 
 type ArtistTrackAgg = {
@@ -103,12 +145,17 @@ export function topArtistsFromTrackScores(
   }
 
   return [...byKey.values()]
-    .map((agg) => ({
-      spotify_id: agg.spotify_id,
-      name: agg.name,
-      artist: null as string | null,
-      score: artistScore(agg),
-    }))
+    .map((agg) => {
+      const used = Math.min(agg.scores.length, TOP_TRACK_SCORES_PER_ARTIST);
+      return {
+        spotify_id: agg.spotify_id,
+        name: agg.name,
+        artist: null as string | null,
+        score: artistScore(agg),
+        track_count: used,
+        rated_count: agg.scores.length,
+      };
+    })
     .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
     .slice(0, limit);
 }

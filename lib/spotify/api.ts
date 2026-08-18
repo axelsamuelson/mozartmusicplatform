@@ -202,6 +202,94 @@ interface SpotifyArtistFull {
   genres: string[];
 }
 
+export type ArtistTopTrack = {
+  spotify_id: string;
+  name: string;
+  artist_name: string | null;
+  image_url: string | null;
+  album_name: string | null;
+};
+
+export type ArtistAlbumRow = {
+  spotify_id: string;
+  name: string;
+  image_url: string | null;
+  release_year: number | null;
+};
+
+export async function fetchArtistTopTracks(
+  artistId: string,
+  market = "SE",
+): Promise<ArtistTopTrack[]> {
+  const token = await getSpotifyToken();
+  const url = new URL(
+    `${API_BASE}/artists/${encodeURIComponent(artistId)}/top-tracks`,
+  );
+  url.searchParams.set("market", market);
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new SpotifyHttpError(
+      res.status,
+      (await res.text()).slice(0, 200) || "Artist top tracks failed",
+    );
+  }
+  const json = (await res.json()) as { tracks?: SpotifyTrackSearch[] };
+  return (json.tracks ?? []).map((t) => ({
+    spotify_id: t.id,
+    name: t.name,
+    artist_name: artistNames(t.artists),
+    image_url: pickImage(t.album?.images),
+    album_name: t.album?.name ?? null,
+  }));
+}
+
+export async function fetchArtistAlbums(
+  artistId: string,
+  limit = 8,
+): Promise<ArtistAlbumRow[]> {
+  const token = await getSpotifyToken();
+  const url = new URL(
+    `${API_BASE}/artists/${encodeURIComponent(artistId)}/albums`,
+  );
+  url.searchParams.set("include_groups", "album");
+  url.searchParams.set("limit", String(limit));
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) {
+    throw new SpotifyHttpError(
+      res.status,
+      (await res.text()).slice(0, 200) || "Artist albums failed",
+    );
+  }
+  const json = (await res.json()) as {
+    items?: Array<{
+      id: string;
+      name: string;
+      images: SpotifyImage[];
+      release_date?: string;
+      album_group?: string;
+    }>;
+  };
+  const seen = new Set<string>();
+  const rows: ArtistAlbumRow[] = [];
+  for (const a of json.items ?? []) {
+    if (seen.has(a.id)) continue;
+    seen.add(a.id);
+    rows.push({
+      spotify_id: a.id,
+      name: a.name,
+      image_url: pickImage(a.images),
+      release_year: releaseYearFromSpotifyDate(a.release_date),
+    });
+  }
+  return rows;
+}
+
 export async function fetchSpotifyItem(
   id: string,
   type: ItemType,
