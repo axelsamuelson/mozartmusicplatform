@@ -32,9 +32,16 @@ export async function GET() {
     );
   }
 
-  return NextResponse.json({
-    genre_tags: genres.data ?? [],
-    mood_tags: moods.data ?? [],
-    moment_tags: moments.data ?? [],
-  });
+  return NextResponse.json(
+    {
+      genre_tags: genres.data ?? [],
+      mood_tags: moods.data ?? [],
+      moment_tags: moments.data ?? [],
+    },
+    {
+      headers: {
+        "Cache-Control": "private, max-age=300, stale-while-revalidate=3600",
+      },
+    },
+  );
 }

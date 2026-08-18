@@ -34,7 +34,8 @@ import {
   unregisterAuditClientProvider,
 } from "@/lib/audit/auditBridge";
 import { prefetchTagsCatalog } from "@/lib/ratings/tagsCache";
-import { fetchWithRetry } from "@/lib/http/fetchRetry";
+import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
+import { toast } from "sonner";
 import { buildClientAuditSnapshot } from "@/lib/audit/useAuditCollector";
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import { createClient } from "@/lib/supabase/client";
@@ -290,35 +291,43 @@ export function Player() {
     const supabase = createClient();
 
     async function fetchPlaybackToken(): Promise<string | null> {
-      const res = await fetch("/api/spotify/token", { cache: "no-store" });
-      if (res.ok) {
-        const body = (await res.json()) as { access_token?: string };
-        return typeof body.access_token === "string" ? body.access_token : null;
-      }
-      if (res.status === 429 || res.status === 503) return null;
-      if (res.status === 401) {
-        const { error } = await supabase.auth.refreshSession();
-        if (!error) {
-          const retry = await fetch("/api/spotify/token", { cache: "no-store" });
-          if (retry.ok) {
-            const body = (await retry.json()) as { access_token?: string };
-            return typeof body.access_token === "string" ? body.access_token : null;
+      try {
+        const res = await fetchWithRetry("/api/spotify/token", { cache: "no-store" });
+        if (res.ok) {
+          const body = (await res.json()) as { access_token?: string };
+          return typeof body.access_token === "string" ? body.access_token : null;
+        }
+        if (res.status === 429 || res.status === 503) return null;
+        if (res.status === 401) {
+          const { error } = await supabase.auth.refreshSession();
+          if (!error) {
+            const retry = await fetchWithRetry("/api/spotify/token", { cache: "no-store" });
+            if (retry.ok) {
+              const body = (await retry.json()) as { access_token?: string };
+              return typeof body.access_token === "string" ? body.access_token : null;
+            }
           }
         }
+        return null;
+      } catch {
+        return null;
       }
-      return null;
     }
 
     registerPlaybackTokenProvider(fetchPlaybackToken);
 
     async function checkSpotifyToken(): Promise<boolean> {
-      const res = await fetch("/api/spotify/token", { cache: "no-store" });
-      if (res.ok) return true;
-      if (res.status !== 401) return false;
-      const { error } = await supabase.auth.refreshSession();
-      if (error) return false;
-      const retry = await fetch("/api/spotify/token", { cache: "no-store" });
-      return retry.ok;
+      try {
+        const res = await fetchWithRetry("/api/spotify/token", { cache: "no-store" });
+        if (res.ok) return true;
+        if (res.status !== 401) return false;
+        const { error } = await supabase.auth.refreshSession();
+        if (error) return false;
+        const retry = await fetchWithRetry("/api/spotify/token", { cache: "no-store" });
+        return retry.ok;
+      } catch {
+        return false;
+      }
     }
 
     async function syncSession(authSession: Session | null) {
@@ -571,6 +580,19 @@ export function Player() {
     playerLog("playback:", playback);
   }, [playback]);
 
+  const runTransport = useCallback(
+    (action: () => Promise<void>) => {
+      void action()
+        .then(() => refreshAfterTransport())
+        .catch((e: unknown) => {
+          toast.error(
+            userFacingFetchError(e, "Could not control playback. Try again."),
+          );
+        });
+    },
+    [refreshAfterTransport],
+  );
+
   const paused = !playback?.isPlaying;
 
   const onTogglePlayPause = useCallback(() => {
@@ -581,13 +603,13 @@ export function Player() {
         syncedAt: Date.now(),
       });
     }
-    void (paused ? resume() : pause()).then(() => refreshAfterTransport());
-  }, [applyPlayback, paused, playback, refreshAfterTransport]);
+    runTransport(() => (paused ? resume() : pause()));
+  }, [applyPlayback, paused, playback, runTransport]);
 
   const onNextTrack = useCallback(() => {
     scheduleTransportPolls();
-    void next().then(() => refreshAfterTransport());
-  }, [refreshAfterTransport, scheduleTransportPolls]);
+    runTransport(() => next());
+  }, [runTransport, scheduleTransportPolls]);
 
   const onPreviousTrack = useCallback(() => {
     if (playback) {
@@ -598,8 +620,8 @@ export function Player() {
       });
     }
     scheduleTransportPolls();
-    void previous().then(() => refreshAfterTransport());
-  }, [applyPlayback, playback, refreshAfterTransport, scheduleTransportPolls]);
+    runTransport(() => previous());
+  }, [applyPlayback, playback, runTransport, scheduleTransportPolls]);
 
   const handleReconnectSpotify = useCallback(async () => {
     const supabase = createClient();
@@ -648,7 +670,7 @@ export function Player() {
         syncedAt: Date.now(),
       });
     }
-    void seek(ms).then(() => refreshAfterTransport());
+    runTransport(() => seek(ms));
   };
 
   const onVolume = (vals: number[]) => {

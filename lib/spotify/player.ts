@@ -195,7 +195,12 @@ async function getTokenString(): Promise<string> {
   if (!tokenProvider) {
     throw new Error("Playback token provider not registered");
   }
-  const t = await tokenProvider();
+  let t: string | null;
+  try {
+    t = await tokenProvider();
+  } catch {
+    throw new Error("Could not refresh Spotify token. Try again.");
+  }
   if (!t) throw new Error("No Spotify access token in session — sign in again.");
   return t;
 }

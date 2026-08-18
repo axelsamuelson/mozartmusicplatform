@@ -76,6 +76,7 @@ export function RatingCard({ rating, className, onRatingUpdated }: RatingCardPro
               alt=""
               width={64}
               height={64}
+              sizes="(max-width: 768px) 48px, 64px"
               className="size-12 object-cover md:size-16"
             />
           ) : (

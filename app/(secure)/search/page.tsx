@@ -43,7 +43,7 @@ export default function SearchPage() {
   }, []);
 
   useEffect(() => {
-    const id = window.setTimeout(() => setDebounced(query.trim()), 600);
+    const id = window.setTimeout(() => setDebounced(query.trim()), 280);
     return () => window.clearTimeout(id);
   }, [query]);
 

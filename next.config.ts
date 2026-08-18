@@ -25,6 +25,9 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  experimental: {
+    optimizePackageImports: ["lucide-react", "ogl"],
+  },
 };
 
 export default nextConfig;
