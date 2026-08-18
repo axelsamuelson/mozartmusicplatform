@@ -7,6 +7,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { PlaylistBuilder } from "@/components/PlaylistBuilder";
+import { PlaylistCover } from "@/components/PlaylistCover";
 import { PlaylistFilterChips } from "@/components/PlaylistFilterChips";
 import { PlaylistSortSelect } from "@/components/PlaylistSortSelect";
 import { PlaylistsSubnav } from "@/components/PlaylistsSubnav";
@@ -256,13 +257,19 @@ export default function PlaylistDetailPage() {
         </Button>
 
         <div className={cn("flex flex-col gap-4 p-6 md:p-8", glassCard)}>
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-            <div className="min-w-0 space-y-2">
-              <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">
-                {playlist.name}
-              </h1>
-              <p className="text-sm text-white/50">{summarizePlaylistFilters(playlist)}</p>
-              <PlaylistFilterChips playlist={playlist} />
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="flex min-w-0 items-start gap-4">
+              <PlaylistCover
+                name={playlist.name}
+                className="size-24 shrink-0 rounded-2xl border border-white/10 md:size-28"
+              />
+              <div className="min-w-0 space-y-2">
+                <h1 className="text-2xl font-bold tracking-tight text-white md:text-3xl">
+                  {playlist.name}
+                </h1>
+                <p className="text-sm text-white/50">{summarizePlaylistFilters(playlist)}</p>
+                <PlaylistFilterChips playlist={playlist} />
+              </div>
             </div>
             <div className="shrink-0 text-right">
               <p className="text-3xl font-bold tabular-nums text-white">

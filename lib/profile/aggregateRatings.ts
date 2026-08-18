@@ -109,7 +109,7 @@ type ArtistTrackAgg = {
  */
 export function topArtistsFromTrackScores(
   ratings: RatingDetail[],
-  limit: number,
+  limit?: number,
 ): TopItem[] {
   const byKey = new Map<string, ArtistTrackAgg>();
 
@@ -144,7 +144,7 @@ export function topArtistsFromTrackScores(
     return Math.round(sum / sorted.length);
   }
 
-  return [...byKey.values()]
+  const ranked = [...byKey.values()]
     .map((agg) => {
       const used = Math.min(agg.scores.length, TOP_TRACK_SCORES_PER_ARTIST);
       return {
@@ -156,8 +156,9 @@ export function topArtistsFromTrackScores(
         rated_count: agg.scores.length,
       };
     })
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
-    .slice(0, limit);
+    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name));
+
+  return limit != null ? ranked.slice(0, limit) : ranked;
 }
 
 function topByType(

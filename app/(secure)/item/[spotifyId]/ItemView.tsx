@@ -7,6 +7,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Play } from "lucide-react";
 import { toast } from "sonner";
 
+import { LoadingMark } from "@/components/LoadingMark";
 import { RatingForm } from "@/components/RatingForm";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -194,7 +195,7 @@ export function ItemView() {
       </Button>
 
       {itemLoading ? (
-        <p className="text-sm text-white/60">Loading…</p>
+        <LoadingMark />
       ) : itemError ? (
         <p className="text-sm text-red-400">{itemError}</p>
       ) : item ? (

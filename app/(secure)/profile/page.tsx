@@ -173,6 +173,8 @@ export default function ProfilePage() {
             description="Each score is the average of that artist’s up to five highest-rated tracks (or all tracks if fewer than five)."
             items={data.top_artists}
             type="artist"
+            seeAllHref="/profile/artists"
+            seeAllLabel="See all rated artists"
           />
         </section>
       )}

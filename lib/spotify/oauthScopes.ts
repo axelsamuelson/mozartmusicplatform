@@ -9,4 +9,5 @@ export const SPOTIFY_OAUTH_SCOPES = [
   "user-read-playback-state",
   "user-modify-playback-state",
   "user-read-currently-playing",
+  "ugc-image-upload",
 ].join(" ");

@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ListMusic, RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { PlaylistFilterChips } from "@/components/PlaylistFilterChips";
+import { PlaylistCover } from "@/components/PlaylistCover";
 import { Button } from "@/components/ui/button";
 import { summarizePlaylistFilters } from "@/lib/playlist/filterSummary";
 import { glassCard } from "@/lib/wamUi";
@@ -94,9 +95,10 @@ export function PlaylistCard({ playlist, onDeleted, onSynced }: PlaylistCardProp
       )}
     >
       <div className="flex items-start gap-3">
-        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-wam/25 bg-wam/10 text-wam">
-          <ListMusic className="size-5" strokeWidth={1.75} aria-hidden />
-        </div>
+        <PlaylistCover
+          name={playlist.name}
+          className="size-16 shrink-0 rounded-xl border border-white/10 md:size-20"
+        />
         <div className="min-w-0 flex-1">
           <Link
             href={`/playlists/${playlist.id}`}

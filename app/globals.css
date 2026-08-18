@@ -886,3 +886,25 @@
   animation: fade-in-section 1s ease-out forwards;
   opacity: 0;
 }
+
+@keyframes wam-eq {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.animate-wam-eq {
+  animation: wam-eq 0.85s ease-in-out infinite;
+  transform-origin: bottom;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-wam-eq {
+    animation: none;
+    transform: scaleY(0.7);
+  }
+}

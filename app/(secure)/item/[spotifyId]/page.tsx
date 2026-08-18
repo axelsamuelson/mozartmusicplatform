@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Suspense } from "react";
 
 import { ItemView } from "./ItemView";
+import { PageLoadingFallback } from "@/components/LoadingMark";
 
 /** Track/album detail and rating form. Artists redirect to `/artist/[id]`. */
 
@@ -26,7 +27,7 @@ export default async function ItemPage({
 
   return (
     <Suspense
-      fallback={<p className="px-4 py-12 text-muted-foreground">Loading…</p>}
+      fallback={<PageLoadingFallback />}
     >
       <ItemView />
     </Suspense>

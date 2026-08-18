@@ -84,7 +84,7 @@ export default function PrivacyPage() {
             </>,
             <>
               Scopes used: user-read-private, user-read-email, playlist-read-private,
-              playlist-modify-public, playlist-modify-private, streaming,
+              playlist-modify-public, playlist-modify-private, ugc-image-upload, streaming,
               user-read-playback-state, user-modify-playback-state,
               user-read-currently-playing.
             </>,

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 
 import { ArtistView } from "./ArtistView";
+import { PageLoadingFallback } from "@/components/LoadingMark";
 
 export const metadata: Metadata = {
   title: "Artist · WAM",
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
 export default function ArtistPage() {
   return (
     <Suspense
-      fallback={<p className="px-4 py-12 text-muted-foreground">Loading…</p>}
+      fallback={<PageLoadingFallback />}
     >
       <ArtistView />
     </Suspense>

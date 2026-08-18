@@ -25,6 +25,8 @@ export interface SpotifyWebPlaybackState {
   } | null;
   track_window: {
     current_track: SpotifyWebPlaybackTrack | null;
+    next_tracks?: SpotifyWebPlaybackTrack[];
+    previous_tracks?: SpotifyWebPlaybackTrack[];
   };
 }
 
@@ -83,6 +85,8 @@ export type AccessTokenProvider = () => Promise<string | null>;
 let tokenProvider: AccessTokenProvider | null = null;
 let sdkPromise: Promise<void> | null = null;
 let innerPlayer: SpotifyWebPlaybackPlayer | null = null;
+/** Last SDK player_state_changed payload (null when this tab is not the active player). */
+let lastSdkState: SpotifyWebPlaybackState | null = null;
 let connectPromise: Promise<SpotifyWebPlaybackPlayer | null> | null = null;
 /** Device id from SDK `ready` — required for Web API `me/player/play`. */
 let playbackDeviceId: string | null = null;
@@ -105,6 +109,7 @@ export function registerStateChangeListener(listener: StateChangeListener): () =
 }
 
 function notifyStateChangeListeners(state: SpotifyWebPlaybackState | null): void {
+  lastSdkState = state;
   for (const listener of stateChangeListeners) {
     try {
       listener(state);
@@ -523,6 +528,7 @@ export function disconnectPlayback(): void {
     innerPlayer = null;
   }
   playbackDeviceId = null;
+  lastSdkState = null;
 }
 
 type SpotifyDevice = { id: string; is_active?: boolean };
@@ -662,6 +668,18 @@ export async function play(spotifyUri: string): Promise<void> {
   await startPlaybackViaWebApi(spotifyUri);
 }
 
+export function peekSdkQueuedTrack(
+  direction: "next" | "previous",
+  index = 0,
+): SpotifyWebPlaybackTrack | null {
+  const list =
+    direction === "next"
+      ? lastSdkState?.track_window?.next_tracks
+      : lastSdkState?.track_window?.previous_tracks;
+  const track = list?.[index];
+  return track?.id ? track : null;
+}
+
 export async function pause(): Promise<void> {
   const token = await getTokenString();
   if (innerPlayer && (await isWamSdkActiveOnDevice())) {
@@ -682,20 +700,26 @@ export async function resume(): Promise<void> {
 }
 
 export async function next(): Promise<void> {
+  if (innerPlayer && lastSdkState) {
+    await innerPlayer.nextTrack();
+    return;
+  }
   const token = await getTokenString();
   if (innerPlayer && (await isWamSdkActiveOnDevice())) {
-    const player = await ensurePlayer();
-    await player.nextTrack();
+    await innerPlayer.nextTrack();
     return;
   }
   await nextViaApi(token);
 }
 
 export async function previous(): Promise<void> {
+  if (innerPlayer && lastSdkState) {
+    await innerPlayer.previousTrack();
+    return;
+  }
   const token = await getTokenString();
   if (innerPlayer && (await isWamSdkActiveOnDevice())) {
-    const player = await ensurePlayer();
-    await player.previousTrack();
+    await innerPlayer.previousTrack();
     return;
   }
   await previousViaApi(token);

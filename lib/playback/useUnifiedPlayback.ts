@@ -9,6 +9,7 @@ import { broadcastPlayback, subscribeToPlayback } from "@/lib/playback/broadcast
 import {
   apiPayloadToPlayback,
   emptyPlayback,
+  playbackFromSdkTrack,
   sdkStateToPlayback,
 } from "@/lib/playback/mappers";
 import { getCurrentProgressMs } from "@/lib/playback/progress";
@@ -18,6 +19,7 @@ import type { PlaybackApiPayload, PlaybackState } from "@/lib/playback/types";
 import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import {
   getCurrentState,
+  peekSdkQueuedTrack,
   registerStateChangeListener,
 } from "@/lib/spotify/player";
 
@@ -28,7 +30,9 @@ const IDLE_API_MS = 60_000;
 const ACTIVE_POLL_CAP_MS = 3_000;
 /** Early polls to detect external-device track changes. */
 const EARLY_SKIP_MS = [2_000, 6_000, 15_000] as const;
-const TRANSPORT_POLL_DELAYS_MS = [500, 1_500, 3_000] as const;
+const TRANSPORT_POLL_DELAYS_MS = [120, 400, 1_000] as const;
+/** Ignore stale SDK/API echoes of a track we just skipped, for this long. */
+const SKIP_STALE_MS = 2_000;
 /** Cap React re-renders from progress interpolation (~4 fps). */
 const DISPLAY_PROGRESS_MIN_INTERVAL_MS = 250;
 
@@ -45,6 +49,8 @@ export type UnifiedPlaybackControls = {
   clearTimers: () => void;
   scheduleApiFetch: (state: PlaybackState | null) => void;
   scheduleTransportPolls: () => void;
+  optimisticSkip: (direction: "next" | "previous") => void;
+  clearSkipTransition: () => void;
 };
 
 export function useUnifiedPlayback(options: {
@@ -77,6 +83,9 @@ export function useUnifiedPlayback(options: {
   const earlySkipTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const transportPollTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   const trackStartedAtRef = useRef(0);
+  const skipIgnoreIdsRef = useRef<Set<string>>(new Set());
+  const skipIgnoreUntilRef = useRef(0);
+  const pendingSkipCountRef = useRef(0);
 
   useEffect(() => {
     playbackRef.current = playback;
@@ -105,8 +114,27 @@ export function useUnifiedPlayback(options: {
     clearTransportPollTimers();
   }, [clearEarlySkipTimers, clearFetchTimer, clearTransportPollTimers]);
 
+  const clearSkipTransition = useCallback(() => {
+    skipIgnoreIdsRef.current.clear();
+    skipIgnoreUntilRef.current = 0;
+    pendingSkipCountRef.current = 0;
+  }, []);
+
   const applyPlayback = useCallback(
     (next: PlaybackState, opts?: { broadcast?: boolean }) => {
+      const ignoreUntil = skipIgnoreUntilRef.current;
+      const ignoreIds = skipIgnoreIdsRef.current;
+      if (
+        ignoreUntil > Date.now() &&
+        next.trackId &&
+        ignoreIds.has(next.trackId)
+      ) {
+        return;
+      }
+      if (next.trackId && ignoreIds.size > 0 && !ignoreIds.has(next.trackId)) {
+        clearSkipTransition();
+      }
+
       const prev = playbackRef.current;
       if (prev?.trackId !== next.trackId) {
         trackStartedAtRef.current = Date.now();
@@ -122,7 +150,32 @@ export function useUnifiedPlayback(options: {
         broadcastPlayback(next);
       }
     },
-    [],
+    [clearSkipTransition, notifyTrackChanged],
+  );
+
+  const optimisticSkip = useCallback(
+    (direction: "next" | "previous") => {
+      const current = playbackRef.current;
+      if (current?.trackId) {
+        skipIgnoreIdsRef.current.add(current.trackId);
+      }
+      skipIgnoreUntilRef.current = Date.now() + SKIP_STALE_MS;
+      const index = pendingSkipCountRef.current;
+      pendingSkipCountRef.current += 1;
+      const queued = peekSdkQueuedTrack(direction, index);
+      if (queued && current) {
+        applyPlayback(playbackFromSdkTrack(queued, { ...current, isPlaying: true }));
+        return;
+      }
+      if (current) {
+        applyPlayback({
+          ...current,
+          progressMsAtSync: 0,
+          syncedAt: Date.now(),
+        });
+      }
+    },
+    [applyPlayback],
   );
 
   const scheduleApiFetch = useCallback(
@@ -413,5 +466,7 @@ export function useUnifiedPlayback(options: {
     clearTimers,
     scheduleApiFetch,
     scheduleTransportPolls,
+    optimisticSkip,
+    clearSkipTransition,
   };
 }

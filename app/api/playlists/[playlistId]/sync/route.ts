@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { syncWamPlaylistToSpotify } from "@/lib/playlist/syncWamPlaylist";
+import { tryUploadGeneratedPlaylistCover } from "@/lib/playlist/uploadCover";
 import { assertWamOwned } from "@/lib/spotify/playlistGuard";
 import { SPOTIFY_CIRCUIT_UNAVAILABLE_MSG } from "@/lib/spotify/rateLimiter";
 import { createClient } from "@/lib/supabase/server";
@@ -78,6 +79,11 @@ export async function POST(
       user.id,
       pl,
       accessToken,
+    );
+    await tryUploadGeneratedPlaylistCover(
+      accessToken,
+      pl.spotify_playlist_id,
+      pl.name,
     );
 
     const { data: updated, error: upErr } = await supabase

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 
+import { LoadingMark } from "@/components/LoadingMark";
 import { RatingCard } from "@/components/RatingCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { WAM_RATINGS_MUTATED } from "@/lib/wamRatingEvents";
@@ -97,7 +98,11 @@ export default function ProfileRatedTracksPage() {
 
       <section className="flex flex-col gap-6">
         <h2 className={sectionHeading}>
-          {loading ? "Loading…" : `${ratings.length} track${ratings.length === 1 ? "" : "s"}`}
+          {loading ? (
+            <LoadingMark />
+          ) : (
+            `${ratings.length} track${ratings.length === 1 ? "" : "s"}`
+          )}
         </h2>
 
         {loading ? (

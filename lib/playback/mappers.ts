@@ -1,5 +1,5 @@
 import type { SpotifyCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
-import type { SpotifyWebPlaybackState } from "@/lib/spotify/player";
+import type { SpotifyWebPlaybackState, SpotifyWebPlaybackTrack } from "@/lib/spotify/player";
 import type { PlaybackApiPayload, PlaybackState } from "@/lib/playback/types";
 
 export function emptyPlayback(): PlaybackState {
@@ -43,6 +43,28 @@ export function sdkStateToPlayback(state: SpotifyWebPlaybackState): PlaybackStat
     deviceName: "WAM Player",
     contextType: state.context?.type ?? null,
     contextUri: state.context?.uri ?? null,
+    itemKind: track.type === "episode" ? "episode" : "track",
+  };
+}
+
+/** Optimistic skip: show an SDK queued track without waiting for player_state_changed. */
+export function playbackFromSdkTrack(
+  track: SpotifyWebPlaybackTrack,
+  base: PlaybackState,
+): PlaybackState {
+  return {
+    ...base,
+    source: "sdk",
+    trackId: track.id,
+    trackName: track.name,
+    artistName: track.artists?.map((a) => a.name).join(", ") ?? "",
+    imageUrl: track.album?.images?.[0]?.url ?? null,
+    durationMs:
+      typeof track.duration_ms === "number" && track.duration_ms > 0
+        ? track.duration_ms
+        : 0,
+    progressMsAtSync: 0,
+    syncedAt: Date.now(),
     itemKind: track.type === "episode" ? "episode" : "track",
   };
 }

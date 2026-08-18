@@ -10,6 +10,7 @@ import {
   playlistFiltersToDbColumns,
 } from "@/lib/playlist/playlistFilters";
 import { parsePlaylistSortOrder } from "@/lib/playlist/sortOrder";
+import { tryUploadGeneratedPlaylistCover } from "@/lib/playlist/uploadCover";
 import type { PlaylistSortOrder, WamPlaylistRow } from "@/lib/types/playlists";
 
 /** Spotify create + DB insert can wait on Retry-After; avoid Vercel killing the function early. */
@@ -202,6 +203,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: msg }, { status: 502 });
     }
     console.log("Step 3: Spotify playlist created", { playlistId });
+
+    await tryUploadGeneratedPlaylistCover(accessToken, playlistId, name);
 
     const filters = {
       ...playlistFiltersToDbColumns(parsedFilters),

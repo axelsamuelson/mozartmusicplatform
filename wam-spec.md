@@ -520,6 +520,7 @@ user-read-email
 playlist-read-private
 playlist-modify-public
 playlist-modify-private
+ugc-image-upload
 ```
 
 > `playlist-read-private` is used only to avoid naming conflicts when creating playlists.

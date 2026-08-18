@@ -189,6 +189,36 @@ export async function createSpotifyPlaylist(
   );
 }
 
+/** Custom JPEG cover (max 256 KB). Requires `ugc-image-upload` scope. */
+export async function uploadSpotifyPlaylistCover(
+  accessToken: string,
+  playlistId: string,
+  jpeg: Buffer,
+): Promise<void> {
+  assertSpotifyCircuitAvailable();
+  if (jpeg.byteLength > 256_000) {
+    throw new Error("Playlist cover exceeds Spotify’s 256 KB limit");
+  }
+  const res = await fetch(
+    `https://api.spotify.com/v1/playlists/${encodeURIComponent(playlistId)}/images`,
+    {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "image/jpeg",
+      },
+      body: jpeg.toString("base64"),
+      cache: "no-store",
+    },
+  );
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(
+      `Spotify cover upload failed: ${res.status} ${t.slice(0, 200)}`,
+    );
+  }
+}
+
 /** Replace entire playlist track list (0–N tracks). Batches when >100 URIs. */
 export async function replacePlaylistTracks(
   accessToken: string,

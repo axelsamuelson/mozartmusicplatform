@@ -174,6 +174,8 @@ export function Player() {
     fetchApiPlayback,
     refreshAfterTransport,
     scheduleTransportPolls,
+    optimisticSkip,
+    clearSkipTransition,
   } = useUnifiedPlayback({
     hasToken,
     playbackReady,
@@ -585,12 +587,14 @@ export function Player() {
       void action()
         .then(() => refreshAfterTransport())
         .catch((e: unknown) => {
+          clearSkipTransition();
+          void refreshAfterTransport();
           toast.error(
             userFacingFetchError(e, "Could not control playback. Try again."),
           );
         });
     },
-    [refreshAfterTransport],
+    [clearSkipTransition, refreshAfterTransport],
   );
 
   const paused = !playback?.isPlaying;
@@ -607,21 +611,16 @@ export function Player() {
   }, [applyPlayback, paused, playback, runTransport]);
 
   const onNextTrack = useCallback(() => {
+    optimisticSkip("next");
     scheduleTransportPolls();
     runTransport(() => next());
-  }, [runTransport, scheduleTransportPolls]);
+  }, [optimisticSkip, runTransport, scheduleTransportPolls]);
 
   const onPreviousTrack = useCallback(() => {
-    if (playback) {
-      applyPlayback({
-        ...playback,
-        progressMsAtSync: 0,
-        syncedAt: Date.now(),
-      });
-    }
+    optimisticSkip("previous");
     scheduleTransportPolls();
     runTransport(() => previous());
-  }, [applyPlayback, playback, runTransport, scheduleTransportPolls]);
+  }, [optimisticSkip, runTransport, scheduleTransportPolls]);
 
   const handleReconnectSpotify = useCallback(async () => {
     const supabase = createClient();
