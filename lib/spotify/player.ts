@@ -1,4 +1,8 @@
 import type { ItemType } from "@/lib/spotify/api";
+import {
+  getPlaybackAccessToken,
+  invalidatePlaybackAccessToken,
+} from "@/lib/spotify/clientPlaybackToken";
 
 /** Spotify Web Playback SDK (subset). */
 export interface SpotifyWebPlaybackTrack {
@@ -202,17 +206,27 @@ function loadSdk(): Promise<void> {
 }
 
 async function getTokenString(): Promise<string> {
-  if (!tokenProvider) {
-    throw new Error("Playback token provider not registered");
-  }
-  let t: string | null;
   try {
-    t = await tokenProvider();
-  } catch {
-    throw new Error("Could not refresh Spotify token. Try again.");
+    return await getPlaybackAccessToken();
+  } catch (e) {
+    if (e instanceof Error && e.message.trim()) throw e;
+    throw new Error("Could not refresh Spotify. Check your connection and try again.");
   }
-  if (!t) throw new Error("No Spotify access token in session — sign in again.");
-  return t;
+}
+
+async function withPlaybackToken(
+  fn: (token: string) => Promise<void>,
+): Promise<void> {
+  const token = await getTokenString();
+  try {
+    await fn(token);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    if (!msg.includes("(401)")) throw e;
+    invalidatePlaybackAccessToken();
+    const retry = await getTokenString();
+    await fn(retry);
+  }
 }
 
 async function readSpotifyFailDetail(res: Response): Promise<string> {
@@ -681,22 +695,20 @@ export function peekSdkQueuedTrack(
 }
 
 export async function pause(): Promise<void> {
-  const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
+  if (innerPlayer && lastSdkState) {
     await innerPlayer.pause();
     return;
   }
-  await pauseViaApi(token);
+  await withPlaybackToken((token) => pauseViaApi(token));
 }
 
 export async function resume(): Promise<void> {
-  const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
+  if (innerPlayer && lastSdkState) {
     const player = await ensurePlayer();
     await player.resume();
     return;
   }
-  await resumeViaApi(token);
+  await withPlaybackToken((token) => resumeViaApi(token));
 }
 
 export async function next(): Promise<void> {
@@ -704,12 +716,13 @@ export async function next(): Promise<void> {
     await innerPlayer.nextTrack();
     return;
   }
-  const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
-    await innerPlayer.nextTrack();
-    return;
-  }
-  await nextViaApi(token);
+  await withPlaybackToken(async (token) => {
+    if (innerPlayer && (await isWamSdkActiveOnDevice())) {
+      await innerPlayer.nextTrack();
+      return;
+    }
+    await nextViaApi(token);
+  });
 }
 
 export async function previous(): Promise<void> {
@@ -717,22 +730,22 @@ export async function previous(): Promise<void> {
     await innerPlayer.previousTrack();
     return;
   }
-  const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
-    await innerPlayer.previousTrack();
-    return;
-  }
-  await previousViaApi(token);
+  await withPlaybackToken(async (token) => {
+    if (innerPlayer && (await isWamSdkActiveOnDevice())) {
+      await innerPlayer.previousTrack();
+      return;
+    }
+    await previousViaApi(token);
+  });
 }
 
 export async function seek(ms: number): Promise<void> {
-  const token = await getTokenString();
-  if (innerPlayer && (await isWamSdkActiveOnDevice())) {
+  if (innerPlayer && lastSdkState) {
     const player = await ensurePlayer();
     await player.seek(ms);
     return;
   }
-  await seekViaApi(token, ms);
+  await withPlaybackToken((token) => seekViaApi(token, ms));
 }
 
 export async function setVolume(level: number): Promise<void> {

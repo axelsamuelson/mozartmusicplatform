@@ -4,7 +4,7 @@ import {
   isSpotify429Error,
   SPOTIFY_CIRCUIT_UNAVAILABLE_MSG,
 } from "@/lib/spotify/rateLimiter";
-import { getValidProviderAccessToken } from "@/lib/spotify/userOAuthToken";
+import { getValidProviderAccessToken, providerAccessTokenTtlSec } from "@/lib/spotify/userOAuthToken";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -22,8 +22,9 @@ export async function GET() {
 
   try {
     const access_token = await getValidProviderAccessToken(supabase);
+    const expires_in = Math.max(60, providerAccessTokenTtlSec(user.id));
     return NextResponse.json(
-      { access_token },
+      { access_token, expires_in },
       { headers: { "Cache-Control": "no-store" } },
     );
   } catch (e) {

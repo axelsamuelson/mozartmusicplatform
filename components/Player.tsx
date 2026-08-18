@@ -35,6 +35,11 @@ import {
 } from "@/lib/audit/auditBridge";
 import { prefetchTagsCatalog } from "@/lib/ratings/tagsCache";
 import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
+import {
+  getPlaybackAccessToken,
+  startPlaybackTokenKeepalive,
+  stopPlaybackTokenKeepalive,
+} from "@/lib/spotify/clientPlaybackToken";
 import { toast } from "sonner";
 import { buildClientAuditSnapshot } from "@/lib/audit/useAuditCollector";
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
@@ -291,26 +296,11 @@ export function Player() {
   useEffect(() => {
     const mountId = ++playerMountRef.current;
     const supabase = createClient();
+    startPlaybackTokenKeepalive();
 
     async function fetchPlaybackToken(): Promise<string | null> {
       try {
-        const res = await fetchWithRetry("/api/spotify/token", { cache: "no-store" });
-        if (res.ok) {
-          const body = (await res.json()) as { access_token?: string };
-          return typeof body.access_token === "string" ? body.access_token : null;
-        }
-        if (res.status === 429 || res.status === 503) return null;
-        if (res.status === 401) {
-          const { error } = await supabase.auth.refreshSession();
-          if (!error) {
-            const retry = await fetchWithRetry("/api/spotify/token", { cache: "no-store" });
-            if (retry.ok) {
-              const body = (await retry.json()) as { access_token?: string };
-              return typeof body.access_token === "string" ? body.access_token : null;
-            }
-          }
-        }
-        return null;
+        return await getPlaybackAccessToken();
       } catch {
         return null;
       }
@@ -320,13 +310,8 @@ export function Player() {
 
     async function checkSpotifyToken(): Promise<boolean> {
       try {
-        const res = await fetchWithRetry("/api/spotify/token", { cache: "no-store" });
-        if (res.ok) return true;
-        if (res.status !== 401) return false;
-        const { error } = await supabase.auth.refreshSession();
-        if (error) return false;
-        const retry = await fetchWithRetry("/api/spotify/token", { cache: "no-store" });
-        return retry.ok;
+        await getPlaybackAccessToken();
+        return true;
       } catch {
         return false;
       }
@@ -440,6 +425,7 @@ export function Player() {
     return () => {
       subscription.unsubscribe();
       unregisterPlaybackTokenProvider();
+      stopPlaybackTokenKeepalive();
       const unmountId = mountId;
       window.setTimeout(() => {
         if (playerMountRef.current === unmountId) {

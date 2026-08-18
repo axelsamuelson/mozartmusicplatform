@@ -1,9 +1,10 @@
-import type { SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient, User } from "@supabase/supabase-js";
 
 import {
   persistSpotifyTokenMetadata,
   sessionProviderTokenIsFresh,
   spotifyRefreshFromUser,
+  spotifyTokenExpiresAt,
 } from "@/lib/spotify/spotifyTokenMetadata";
 import {
   isSpotify429Error,
@@ -12,9 +13,10 @@ import {
   SPOTIFY_CIRCUIT_UNAVAILABLE_MSG,
 } from "@/lib/spotify/rateLimiter";
 import {
-  clearSpotifyTokenCache,
   getCachedSpotifyAccess,
+  getCachedSpotifyAccessTtlSec,
   getInflightSpotifyRefresh,
+  getStaleSpotifyAccess,
   markSpotifyMetadataPersisted,
   setCachedSpotifyAccess,
   setInflightSpotifyRefresh,
@@ -98,14 +100,27 @@ async function refreshAndCache(
     if (isSpotify429Error(e)) {
       recordSpotify429();
     }
-    clearSpotifyTokenCache(userId);
+    const stale = getStaleSpotifyAccess(userId);
+    if (stale) return stale;
     throw e;
   }
 }
 
+function cacheKnownAccessToken(
+  userId: string,
+  accessToken: string,
+  user: User,
+): void {
+  const expiresAt = spotifyTokenExpiresAt(user);
+  const now = Math.floor(Date.now() / 1000);
+  const ttl = expiresAt > now ? expiresAt - now : 3600;
+  setCachedSpotifyAccess(userId, accessToken, Math.max(60, ttl));
+}
+
 /**
  * Spotify user access token: in-memory cache → fresh session token → refresh.
- * Refresh token order: session.provider_refresh_token → user_metadata.spotify_refresh_token.
+ * Works even when `getSession()` has dropped `provider_token` (common after
+ * Supabase cookie refresh) as long as user_metadata still has a refresh token.
  */
 export async function getValidProviderAccessToken(
   supabase: SupabaseClient,
@@ -115,41 +130,58 @@ export async function getValidProviderAccessToken(
     supabase.auth.getUser(),
   ]);
 
-  if (!session) {
+  if (!user) {
     throw new Error("MISSING_SPOTIFY_TOKEN");
   }
 
-  const userId = user?.id ?? session.user.id;
+  const userId = user.id;
 
   const cached = getCachedSpotifyAccess(userId);
   if (cached) return cached;
 
   if (isSpotifyCircuitOpen()) {
-    if (session.provider_token) {
-      return session.provider_token;
-    }
+    const fallback =
+      getStaleSpotifyAccess(userId) ?? session?.provider_token ?? null;
+    if (fallback) return fallback;
     throw new Error(SPOTIFY_CIRCUIT_UNAVAILABLE_MSG);
   }
 
-  if (sessionProviderTokenIsFresh(session.provider_token, user)) {
-    return session.provider_token;
+  const sessionToken = session?.provider_token;
+  if (sessionProviderTokenIsFresh(sessionToken, user)) {
+    cacheKnownAccessToken(userId, sessionToken, user);
+    return sessionToken;
   }
 
   const inflight = getInflightSpotifyRefresh(userId);
   if (inflight) return inflight;
 
-  const refreshFromSession = session.provider_refresh_token?.trim() || null;
+  const refreshFromSession = session?.provider_refresh_token?.trim() || null;
   const refreshFromMetadata = spotifyRefreshFromUser(user);
   const refresh = refreshFromSession ?? refreshFromMetadata;
 
   if (!refresh) {
-    if (session.provider_token) {
-      return session.provider_token;
+    const fallback =
+      getStaleSpotifyAccess(userId) ?? session?.provider_token ?? null;
+    if (fallback) {
+      setCachedSpotifyAccess(userId, fallback, 120);
+      return fallback;
     }
     throw new Error("MISSING_SPOTIFY_REFRESH");
   }
 
-  const promise = refreshAndCache(supabase, userId, refresh);
+  const promise = refreshAndCache(supabase, userId, refresh).catch((e) => {
+    const fallback =
+      getStaleSpotifyAccess(userId) ?? session?.provider_token ?? null;
+    if (fallback) {
+      setCachedSpotifyAccess(userId, fallback, 120);
+      return fallback;
+    }
+    throw e;
+  });
   setInflightSpotifyRefresh(userId, promise);
   return promise;
+}
+
+export function providerAccessTokenTtlSec(userId: string): number {
+  return getCachedSpotifyAccessTtlSec(userId) ?? 3600;
 }

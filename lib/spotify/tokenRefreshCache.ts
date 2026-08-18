@@ -17,7 +17,19 @@ export function getCachedSpotifyAccess(userId: string): string | null {
   const hit = accessByUser.get(userId);
   if (!hit) return null;
   if (hit.expiresAtSec <= Math.floor(Date.now() / 1000) + TOKEN_EXPIRY_BUFFER_SEC) {
-    accessByUser.delete(userId);
+    return null;
+  }
+  return hit.accessToken;
+}
+
+/** Last-known access token, including shortly after our refresh buffer. */
+export function getStaleSpotifyAccess(
+  userId: string,
+  maxExpiredSec = 300,
+): string | null {
+  const hit = accessByUser.get(userId);
+  if (!hit) return null;
+  if (hit.expiresAtSec + maxExpiredSec < Math.floor(Date.now() / 1000)) {
     return null;
   }
   return hit.accessToken;
