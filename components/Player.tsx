@@ -33,6 +33,8 @@ import {
   registerAuditClientProvider,
   unregisterAuditClientProvider,
 } from "@/lib/audit/auditBridge";
+import { prefetchTagsCatalog } from "@/lib/ratings/tagsCache";
+import { fetchWithRetry } from "@/lib/http/fetchRetry";
 import { buildClientAuditSnapshot } from "@/lib/audit/useAuditCollector";
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import { createClient } from "@/lib/supabase/client";
@@ -272,6 +274,12 @@ export function Player() {
     refreshLiveSessionPolling,
   ]);
 
+  useEffect(() => {
+    if (!hasUser) return;
+    prefetchTagsCatalog();
+    void fetch("/api/ratings?limit=1", { cache: "no-store" }).catch(() => {});
+  }, [hasUser]);
+
   const lastSyncedUserIdRef = useRef<string | null>(null);
   const syncSessionRef = useRef<(authSession: Session | null) => Promise<void>>(
     async () => {},
@@ -478,7 +486,7 @@ export function Player() {
       return;
     }
     const ac = new AbortController();
-    void fetch(`/api/ratings?spotify_id=${encodeURIComponent(nowTrackId)}`, {
+    void fetchWithRetry(`/api/ratings?spotify_id=${encodeURIComponent(nowTrackId)}`, {
       signal: ac.signal,
     })
       .then(async (res) => {
@@ -502,6 +510,28 @@ export function Player() {
   useEffect(() => {
     setRateDialogOpen(false);
   }, [nowTrackId]);
+
+  useEffect(() => {
+    if (!hasUser || !nowTrackId || !nowPlayingIsRateableTrack) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key !== "r" && e.key !== "R") return;
+      const el = e.target;
+      if (
+        el instanceof HTMLElement &&
+        (el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT" ||
+          el.isContentEditable)
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      e.preventDefault();
+      setRateDialogOpen(true);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hasUser, nowTrackId, nowPlayingIsRateableTrack]);
 
   const volumeFromSdk = playbackReady && fromSdk;
 
@@ -555,18 +585,9 @@ export function Player() {
   }, [applyPlayback, paused, playback, refreshAfterTransport]);
 
   const onNextTrack = useCallback(() => {
-    if (playback) {
-      applyPlayback({
-        ...playback,
-        trackId: null,
-        trackName: null,
-        progressMsAtSync: 0,
-        syncedAt: Date.now(),
-      });
-    }
     scheduleTransportPolls();
     void next().then(() => refreshAfterTransport());
-  }, [applyPlayback, playback, refreshAfterTransport, scheduleTransportPolls]);
+  }, [refreshAfterTransport, scheduleTransportPolls]);
 
   const onPreviousTrack = useCallback(() => {
     if (playback) {
@@ -708,7 +729,7 @@ export function Player() {
                 aria-label={
                   currentTrackRating
                     ? `Rated ${currentTrackRating.score}, edit rating`
-                    : "Rate this track"
+                    : "Rate this track (R)"
                 }
                 className={cn(
                   "rounded-full px-3 py-1 text-xs font-semibold tabular-nums transition-colors",
@@ -739,7 +760,7 @@ export function Player() {
             }}
           >
             <div
-              className="h-full rounded-full bg-wam transition-[width]"
+              className="h-full rounded-full bg-wam"
               style={{ width: `${progress}%` }}
             />
           </div>
@@ -871,7 +892,7 @@ export function Player() {
                 }}
               >
                 <div
-                  className="h-full rounded-full bg-wam transition-[width]"
+                  className="h-full rounded-full bg-wam"
                   style={{ width: `${progress}%` }}
                 />
               </div>
@@ -891,7 +912,7 @@ export function Player() {
               aria-label={
                 currentTrackRating
                   ? `Rated ${currentTrackRating.score}, edit rating`
-                  : "Rate this track"
+                  : "Rate this track (R)"
               }
               className={cn(
                 "shrink-0 rounded-full px-4 py-1.5 text-sm font-semibold tabular-nums transition-colors",

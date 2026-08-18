@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { ScoreSlider } from "@/components/ScoreSlider";
 import { TempoIntensitySlider } from "@/components/TempoIntensitySlider";
 import { Button } from "@/components/ui/button";
+import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
 import type { LiveSessionRow } from "@/lib/types/live";
 import { glassCard } from "@/lib/wamUi";
 
@@ -41,10 +42,22 @@ export function QuickRate({
   const [intensity, setIntensity] = useState<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [retroOpen, setRetroOpen] = useState(false);
+  const [optimisticRated, setOptimisticRated] = useState(false);
+
+  const shownAsRated = hasRatedCurrent || optimisticRated;
+
+  useEffect(() => {
+    setOptimisticRated(false);
+    setScore(50);
+    setTempo(null);
+    setIntensity(null);
+    setRetroOpen(false);
+  }, [trackId]);
 
   async function submit(retroactive = false, targetTrackId?: string) {
     const tid = targetTrackId ?? trackId;
     if (!tid) return;
+    if (!retroactive) setOptimisticRated(true);
     setSubmitting(true);
     try {
       const ratingTimeMs =
@@ -52,7 +65,7 @@ export function QuickRate({
           ? Date.now() - new Date(trackStartedAt).getTime()
           : null;
 
-      const res = await fetch(`/api/live/${sessionId}/ratings`, {
+      const res = await fetchWithRetry(`/api/live/${sessionId}/ratings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -70,7 +83,8 @@ export function QuickRate({
       setRetroOpen(false);
       onSubmitted?.();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not rate");
+      if (!retroactive) setOptimisticRated(false);
+      toast.error(userFacingFetchError(e, "Could not save rating. Try again."));
     } finally {
       setSubmitting(false);
     }
@@ -86,7 +100,7 @@ export function QuickRate({
 
   return (
     <section className={glassCard}>
-      {hasRatedCurrent ? (
+      {shownAsRated ? (
         <div className="text-center text-sm text-white/60">
           <p>Your rating: {score}</p>
           <p className="mt-1 text-xs">

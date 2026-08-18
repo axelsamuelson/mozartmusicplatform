@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { X } from "lucide-react";
 
@@ -15,8 +15,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
-import { Skeleton } from "@/components/ui/skeleton";
 import type { ItemType } from "@/lib/spotify/api";
+import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
+import { loadTagsCatalog, peekCachedTags } from "@/lib/ratings/tagsCache";
 import { dispatchRatingsMutated } from "@/lib/wamRatingEvents";
 import type {
   GenreTagRow,
@@ -65,12 +66,18 @@ export function NowPlayingRatingDialog({
   displayImageUrl,
   onRatingUpdated,
 }: NowPlayingRatingDialogProps) {
-  const [genreTags, setGenreTags] = useState<GenreTagRow[]>([]);
-  const [momentTags, setMomentTags] = useState<MomentTagRow[]>([]);
+  const cachedTags = peekCachedTags();
+  const [genreTags, setGenreTags] = useState<GenreTagRow[]>(
+    () => cachedTags?.genre_tags ?? [],
+  );
+  const [momentTags, setMomentTags] = useState<MomentTagRow[]>(
+    () => cachedTags?.moment_tags ?? [],
+  );
   const [item, setItem] = useState<CachedRow | null>(null);
   const [rating, setRating] = useState<RatingDetail | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loadingRating, setLoadingRating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const dirtyRef = useRef(false);
 
   const [score, setScore] = useState(50);
   const [comment, setComment] = useState("");
@@ -84,55 +91,57 @@ export function NowPlayingRatingDialog({
   useEffect(() => {
     if (!open || !spotifyId) return;
     const ac = new AbortController();
-    setLoading(true);
+    dirtyRef.current = false;
     setError(null);
     setItem(null);
     setRating(null);
+    setLoadingRating(true);
 
     void (async () => {
       try {
-        const [itemRes, tagsRes, ratRes] = await Promise.all([
-          fetch(
+        const [itemRes, catalog, ratRes] = await Promise.all([
+          fetchWithRetry(
             `/api/spotify/item/${encodeURIComponent(spotifyId)}?type=${encodeURIComponent(itemType)}`,
             { signal: ac.signal },
           ),
-          fetch("/api/tags", { signal: ac.signal }),
-          fetch(`/api/ratings?spotify_id=${encodeURIComponent(spotifyId)}`, {
+          loadTagsCatalog(),
+          fetchWithRetry(`/api/ratings?spotify_id=${encodeURIComponent(spotifyId)}`, {
             signal: ac.signal,
           }),
         ]);
 
         if (ac.signal.aborted) return;
 
-        const tagsBody = (await tagsRes.json().catch(() => ({}))) as {
-          error?: string;
-          genre_tags?: GenreTagRow[];
-          moment_tags?: MomentTagRow[];
-        };
-        if (!tagsRes.ok) throw new Error(tagsBody.error ?? "Failed to load tags");
-        setGenreTags(tagsBody.genre_tags ?? []);
-        setMomentTags(tagsBody.moment_tags ?? []);
+        setGenreTags(catalog.genre_tags);
+        setMomentTags(catalog.moment_tags);
 
         const itemBody = (await itemRes.json().catch(() => ({}))) as {
           error?: string;
           item?: CachedRow;
         };
-        if (!itemRes.ok) {
-          throw new Error(itemBody.error ?? "Could not load item from Spotify");
-        }
-        setItem(itemBody.item ?? null);
+        if (itemRes.ok && itemBody.item) setItem(itemBody.item);
 
         const ratBody = (await ratRes.json().catch(() => ({}))) as {
           error?: string;
           rating?: RatingDetail | null;
         };
         if (!ratRes.ok) throw new Error(ratBody.error ?? "Failed to load rating");
-        setRating(ratBody.rating ?? null);
+        const nextRating = ratBody.rating ?? null;
+        setRating(nextRating);
+        if (!dirtyRef.current) {
+          const s = stateFromRating(nextRating);
+          setScore(s.score);
+          setComment(s.comment);
+          setGenreIds(s.genreIds);
+          setTempo(s.tempo);
+          setIntensity(s.intensity);
+          setMomentIds(s.momentIds);
+        }
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;
-        setError(e instanceof Error ? e.message : "Load failed");
+        setError(userFacingFetchError(e, "Could not load rating. You can still save."));
       } finally {
-        if (!ac.signal.aborted) setLoading(false);
+        if (!ac.signal.aborted) setLoadingRating(false);
       }
     })();
 
@@ -140,15 +149,8 @@ export function NowPlayingRatingDialog({
   }, [open, spotifyId, itemType]);
 
   useEffect(() => {
-    if (!open) return;
-    const s = stateFromRating(rating);
-    setScore(s.score);
-    setComment(s.comment);
-    setGenreIds(s.genreIds);
-    setTempo(s.tempo);
-    setIntensity(s.intensity);
-    setMomentIds(s.momentIds);
-  }, [open, rating]);
+    if (!open) dirtyRef.current = false;
+  }, [open]);
 
   const title = item?.name ?? displayTitle;
   const artist = item?.artist_name ?? displayArtist;
@@ -158,9 +160,25 @@ export function NowPlayingRatingDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const optimistic: RatingDetail = {
+      id: rating?.id ?? `optimistic-${spotifyId}`,
+      spotify_id: spotifyId,
+      score,
+      comment: comment.trim() || null,
+      created_at: rating?.created_at ?? new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      tempo,
+      intensity,
+      genres: genreTags.filter((g) => genreIds.includes(g.id)),
+      mood: rating?.mood ?? null,
+      moments: momentTags.filter((m) => momentIds.includes(m.id)),
+      item: rating?.item ?? null,
+    };
     setSaving(true);
+    onRatingUpdated(optimistic);
+    onOpenChange(false);
     try {
-      const res = await fetch("/api/ratings", {
+      const res = await fetchWithRetry("/api/ratings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -177,17 +195,20 @@ export function NowPlayingRatingDialog({
         error?: string;
         rating?: RatingDetail;
       };
-      if (!res.ok) {
+      if (!res.ok || !body.rating) {
+        onRatingUpdated(rating);
         toast.error(body.error || "Could not save rating");
+        onOpenChange(true);
         return;
       }
-      if (body.rating) {
-        setRating(body.rating);
-        onRatingUpdated(body.rating);
-        dispatchRatingsMutated();
-        toast.success("Rating saved");
-        onOpenChange(false);
-      }
+      setRating(body.rating);
+      onRatingUpdated(body.rating);
+      dispatchRatingsMutated();
+      toast.success("Rating saved");
+    } catch (e) {
+      onRatingUpdated(rating);
+      toast.error(userFacingFetchError(e, "Could not save rating. Try again."));
+      onOpenChange(true);
     } finally {
       setSaving(false);
     }
@@ -284,15 +305,17 @@ export function NowPlayingRatingDialog({
                   </div>
                 </header>
 
-                {loading ? (
-                  <Skeleton className="h-40 w-full rounded-xl bg-white/[0.06]" />
-                ) : error ? (
-                  <p className="text-sm text-red-400" role="alert">
+                {error ? (
+                  <p className="text-sm text-amber-300/90" role="alert">
                     {error}
                   </p>
-                ) : (
-                  <>
-                    <section>
+                ) : null}
+
+                {loadingRating && !rating ? (
+                  <p className="text-[11px] text-white/35">Loading previous rating…</p>
+                ) : null}
+
+                <section>
                       <div className="flex items-baseline justify-between gap-3">
                         <span className="text-xs font-normal uppercase tracking-wider text-white/40">
                           Score
@@ -312,7 +335,10 @@ export function NowPlayingRatingDialog({
                         max={100}
                         step={1}
                         value={[score]}
-                        onValueChange={(v) => setScore(v[0] ?? 0)}
+                        onValueChange={(v) => {
+                          dirtyRef.current = true;
+                          setScore(v[0] ?? 0);
+                        }}
                         disabled={saving || deleting}
                       />
                     </section>
@@ -322,11 +348,18 @@ export function NowPlayingRatingDialog({
                       momentTags={momentTags}
                       selectedGenreIds={genreIds}
                       selectedMomentIds={momentIds}
-                      onGenresChange={setGenreIds}
-                      onMomentsChange={setMomentIds}
+                      onGenresChange={(ids) => {
+                        dirtyRef.current = true;
+                        setGenreIds(ids);
+                      }}
+                      onMomentsChange={(ids) => {
+                        dirtyRef.current = true;
+                        setMomentIds(ids);
+                      }}
                       tempo={tempo}
                       intensity={intensity}
                       onTempoIntensityChange={(t, i) => {
+                        dirtyRef.current = true;
                         setTempo(t);
                         setIntensity(i);
                       }}
@@ -342,19 +375,19 @@ export function NowPlayingRatingDialog({
                         id="now-playing-rating-comment"
                         rows={2}
                         value={comment}
-                        onChange={(e) => setComment(e.target.value)}
+                        onChange={(e) => {
+                          dirtyRef.current = true;
+                          setComment(e.target.value);
+                        }}
                         disabled={saving || deleting}
                         placeholder="Optional comment…"
                         className="w-full resize-none rounded-xl border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none transition-colors placeholder:text-white/30 focus:border-white/25"
                       />
                     </section>
-                  </>
-                )}
               </div>
             </div>
 
-            {!loading && !error ? (
-              <footer className="shrink-0 border-t border-white/10 bg-black/50 px-5 pt-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] backdrop-blur-sm max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+            <footer className="shrink-0 border-t border-white/10 bg-black/50 px-5 pt-3 pb-[max(0.25rem,env(safe-area-inset-bottom))] backdrop-blur-sm max-md:pb-[max(1.25rem,env(safe-area-inset-bottom))]">
                 <div
                   className={cn(
                     "flex items-center gap-3",
@@ -380,7 +413,6 @@ export function NowPlayingRatingDialog({
                   </button>
                 </div>
               </footer>
-            ) : null}
           </form>
         </div>
       </DialogContent>

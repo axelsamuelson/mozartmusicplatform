@@ -11,6 +11,7 @@ import type {
   MomentTagRow,
   RatingDetail,
 } from "@/lib/types/ratings";
+import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
 import { dispatchRatingsMutated } from "@/lib/wamRatingEvents";
 import { glassPanel, sectionHeading } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
@@ -72,7 +73,7 @@ export function RatingForm({
 
     setSaving(true);
     try {
-      const res = await fetch("/api/ratings", {
+      const res = await fetchWithRetry("/api/ratings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -98,6 +99,8 @@ export function RatingForm({
         dispatchRatingsMutated();
         toast.success("Rating saved");
       }
+    } catch (e) {
+      toast.error(userFacingFetchError(e, "Could not save rating. Try again."));
     } finally {
       setSaving(false);
     }

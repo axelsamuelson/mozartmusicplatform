@@ -10,6 +10,7 @@ import { JukeboxScoreboard } from "@/components/live/JukeboxScoreboard";
 import { LiveJamsRoom } from "@/components/live/LiveJamsRoom";
 import { LiveSimulatePanel } from "@/components/live/LiveSimulatePanel";
 import { useTestParticipants } from "@/lib/dev/useTestParticipants";
+import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
 import { SessionTimer } from "@/components/live/SessionTimer";
 import { LiveNowPlaying } from "@/components/LiveNowPlaying";
 import { LiveParticipants } from "@/components/LiveParticipants";
@@ -346,7 +347,7 @@ export default function LiveSessionPage() {
     if (!session || isTrackOwner) return;
     setSubmitting(true);
     try {
-      const res = await fetch(`/api/live/${session.id}/ratings`, {
+      const res = await fetchWithRetry(`/api/live/${session.id}/ratings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -366,7 +367,7 @@ export default function LiveSessionPage() {
       if (body.scores) setScores(body.scores);
       toast.success("Rating submitted");
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not submit rating");
+      toast.error(userFacingFetchError(e, "Could not save rating. Try again."));
     } finally {
       setSubmitting(false);
     }
