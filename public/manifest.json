@@ -1,7 +1,7 @@
 {
-  "name": "WAM — Music Rating",
-  "short_name": "WAM",
-  "description": "Rate and queue music with your team",
+  "name": "Musicator",
+  "short_name": "Musicator",
+  "description": "Rate music with your team",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#000000",

@@ -1,7 +1,15 @@
 import { redirect } from "next/navigation";
+import type { Metadata } from "next";
 
 import { AuthErrorAlert } from "@/components/AuthErrorAlert";
 import { SpotifyLoginButton } from "@/components/SpotifyLoginButton";
+import {
+  BRAND_ALTERNATE_NAME,
+  BRAND_DESCRIPTION,
+  BRAND_NAME,
+  BRAND_TITLE,
+  SITE_URL,
+} from "@/lib/seo/site";
 import { createClient } from "@/lib/supabase/server";
 
 function IconRate() {
@@ -47,6 +55,11 @@ type HomeProps = {
   searchParams?: Promise<{ error?: string; reason?: string; next?: string }>;
 };
 
+export const metadata: Metadata = {
+  alternates: { canonical: "/" },
+  openGraph: { url: SITE_URL, title: BRAND_TITLE, description: BRAND_DESCRIPTION },
+};
+
 export default async function Home({ searchParams }: HomeProps) {
   const supabase = await createClient();
   const {
@@ -81,27 +94,47 @@ export default async function Home({ searchParams }: HomeProps) {
     },
     {
       title: "Create playlists",
-      description: "Sync Spotify playlists from your ratings and saved filters — WAM-owned only.",
+      description: "Sync Spotify playlists from your ratings and saved filters — Musicator-owned only.",
       icon: <IconPlaylist />,
     },
   ] as const;
 
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "WebApplication",
+    name: BRAND_NAME,
+    alternateName: BRAND_ALTERNATE_NAME,
+    url: SITE_URL,
+    applicationCategory: "MultimediaApplication",
+    operatingSystem: "Web",
+    description: BRAND_DESCRIPTION,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  };
+
   return (
     <section className="relative flex min-h-screen items-center justify-center px-4 py-20">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify(jsonLd).replace(/</g, "\\u003c"),
+        }}
+      />
       <div className="relative z-10 mx-auto max-w-4xl text-center">
         <div className="animate-fade-in-badge mb-8 mt-8 inline-flex items-center rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-white backdrop-blur-md sm:mt-12">
           <span className="mr-2 size-2 animate-pulse rounded-full bg-white/60" />
-          Your music, your scores
+          Music rating on Spotify
         </div>
 
         <h1 className="animate-fade-in-heading mb-6 text-balance text-3xl font-bold text-white sm:text-4xl md:text-6xl">
-          Your personal music diary
+          {BRAND_NAME}
           <br />
-          <span className="mt-3 inline-block text-white/95 sm:mt-4 md:mt-6">Rate, tag &amp; build playlists</span>
+          <span className="mt-3 inline-block text-white/95 sm:mt-4 md:mt-6">
+            Rate music with your team
+          </span>
         </h1>
 
         <p className="animate-fade-in-subheading mx-auto mb-8 max-w-sm px-4 text-base leading-relaxed font-light text-white sm:max-w-3xl sm:px-0 sm:text-xl md:text-2xl">
-          Sign in with Spotify to search your library vibe, capture scores, and sync playlists you own through WAM.
+          Sign in with Spotify to score tracks, tag your library, and sync playlists you own in Musicator.
         </p>
 
         <AuthErrorAlert authFailed={authFailed} reason={authReason} />

@@ -168,11 +168,11 @@ export function Navigation() {
         {/* Mobile: slim floating pill */}
         <div className="pointer-events-auto mx-auto mb-2 flex w-full max-w-[calc(100%-2rem)] items-center justify-between rounded-full border border-white/20 bg-white/10 px-4 py-2 backdrop-blur-md md:hidden">
           <Link
-            href="/dashboard"
+            href={user ? "/dashboard" : "/"}
             className="flex shrink-0 items-center gap-2 transition-transform duration-200 hover:scale-105"
             onClick={() => setIsOpen(false)}
           >
-            <span className="text-base font-semibold tracking-tight text-white">WAM</span>
+            <span className="text-base font-semibold tracking-tight text-white">Musicator</span>
             <span className="size-2 shrink-0 rounded-full bg-wam" aria-hidden />
           </Link>
           <button
@@ -192,10 +192,10 @@ export function Navigation() {
             <div className="rounded-full border border-white/20 bg-white/10 px-6 py-2 backdrop-blur-md">
               <div className="flex items-center justify-between gap-2">
                 <Link
-                  href="/dashboard"
+                  href={user ? "/dashboard" : "/"}
                   className="flex shrink-0 items-center gap-2 transition-transform duration-200 hover:scale-105"
                 >
-                  <span className="text-lg font-semibold tracking-tight text-white">WAM</span>
+                  <span className="text-lg font-semibold tracking-tight text-white">Musicator</span>
                   <span className="size-2 shrink-0 rounded-full bg-wam" aria-hidden />
                 </Link>
 

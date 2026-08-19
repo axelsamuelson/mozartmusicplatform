@@ -4,8 +4,9 @@ import Link from "next/link";
 import { LegalPageLayout } from "@/components/LegalPageLayout";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — Musicator (WAM)",
-  description: "Terms of Service for Musicator (WAM) at musicator.app",
+  title: "Terms of Service",
+  description: "Terms of Service for Musicator at musicator.app",
+  alternates: { canonical: "/terms" },
 };
 
 const meta = (

@@ -4,8 +4,9 @@ import Link from "next/link";
 import { LegalPageLayout } from "@/components/LegalPageLayout";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy — Musicator (WAM)",
-  description: "Privacy Policy for Musicator (WAM) at musicator.app",
+  title: "Privacy Policy",
+  description: "Privacy Policy for Musicator at musicator.app",
+  alternates: { canonical: "/privacy" },
 };
 
 const meta = (
