@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { TempoIntensitySlider } from "@/components/TempoIntensitySlider";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,8 @@ import {
   getTopSuggestions,
   sortMomentTagsWithSuggestions,
 } from "@/lib/ratings/tagSuggestions";
+import { sortGenreTagsByPopularity } from "@/lib/ratings/topGenres";
+import { WAM_RATINGS_MUTATED } from "@/lib/wamRatingEvents";
 import type {
   GenreTagRow,
   MomentSubcategory,
@@ -43,6 +45,58 @@ function toggleId(ids: number[], id: number): number[] {
   return [...ids, id];
 }
 
+function GenreChip({
+  genre,
+  selected,
+  popular,
+  isDialog,
+  disabled,
+  onToggle,
+}: {
+  genre: GenreTagRow;
+  selected: boolean;
+  popular: boolean;
+  isDialog: boolean;
+  disabled?: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <Badge
+      asChild
+      variant="outline"
+      className={cn(
+        "cursor-pointer rounded-full font-medium transition-colors",
+        isDialog
+          ? cn(
+              "border px-3 py-1 text-xs",
+              selected
+                ? popular
+                  ? "border-violet-300 bg-violet-400/90 text-black hover:bg-violet-300"
+                  : "border-wam bg-wam/10 text-wam hover:bg-wam/15"
+                : popular
+                  ? "border-violet-400/50 bg-violet-500/20 text-violet-200 hover:border-violet-300/70 hover:text-violet-100"
+                  : "border-white/15 text-white/60 hover:border-white/30 hover:text-white",
+            )
+          : cn(
+              "border px-2.5 py-1 text-xs transition-all duration-200 hover:scale-[1.02]",
+              selected
+                ? popular
+                  ? "border-transparent bg-violet-300 text-black hover:bg-violet-200"
+                  : "border-transparent bg-white text-black hover:bg-white"
+                : popular
+                  ? "border-violet-400/45 bg-violet-500/20 text-violet-100 hover:border-violet-300/70 hover:bg-violet-500/30"
+                  : "border-white/20 bg-white/5 text-white/90 hover:border-white/30 hover:bg-white/10",
+            ),
+        disabled && "pointer-events-none opacity-50",
+      )}
+    >
+      <button type="button" disabled={disabled} onClick={onToggle}>
+        {genre.name}
+      </button>
+    </Badge>
+  );
+}
+
 export function TagPicker({
   genreTags,
   momentTags,
@@ -59,11 +113,43 @@ export function TagPicker({
   showTempoIntensity = true,
 }: TagPickerProps) {
   const isDialog = visualVariant === "dialog";
+  const [topGenreIds, setTopGenreIds] = useState<number[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    function loadTopGenres() {
+      void fetch("/api/tags/top-genres", { cache: "no-store" })
+        .then(async (res) => {
+          const body = (await res.json().catch(() => ({}))) as {
+            top_genre_ids?: number[];
+          };
+          if (!res.ok || cancelled) return;
+          const ids = (body.top_genre_ids ?? []).filter(
+            (id): id is number => Number.isInteger(id),
+          );
+          setTopGenreIds(ids);
+        })
+        .catch(() => {});
+    }
+
+    loadTopGenres();
+    window.addEventListener(WAM_RATINGS_MUTATED, loadTopGenres);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(WAM_RATINGS_MUTATED, loadTopGenres);
+    };
+  }, []);
 
   const suggestions = useMemo(() => {
     if (tempo == null || intensity == null) return [];
     return getTopSuggestions(tempo, intensity);
   }, [tempo, intensity]);
+
+  const { top: popularGenres, rest: otherGenres } = useMemo(
+    () => sortGenreTagsByPopularity(genreTags, topGenreIds),
+    [genreTags, topGenreIds],
+  );
 
   return (
     <div className={cn("flex flex-col", isDialog ? "gap-6" : "gap-8", className)}>
@@ -84,42 +170,49 @@ export function TagPicker({
             Pick any genres that fit (optional).
           </p>
         ) : null}
-        <div className={cn("flex flex-wrap", isDialog ? "gap-2" : "gap-1.5")}>
-          {genreTags.map((g) => {
-            const on = selectedGenreIds.includes(g.id);
-            return (
-              <Badge
-                key={g.id}
-                asChild
-                variant="outline"
+        <div className="flex flex-col gap-3">
+          {popularGenres.length > 0 ? (
+            <div className="flex flex-col gap-1.5">
+              <p
                 className={cn(
-                  "cursor-pointer rounded-full font-medium transition-colors",
-                  isDialog
-                    ? cn(
-                        "border px-3 py-1 text-xs",
-                        on
-                          ? "border-wam bg-wam/10 text-wam hover:bg-wam/15"
-                          : "border-white/15 text-white/60 hover:border-white/30 hover:text-white",
-                      )
-                    : cn(
-                        "border px-2.5 py-1 text-xs transition-all duration-200 hover:scale-[1.02]",
-                        on
-                          ? "border-transparent bg-white text-black hover:bg-white"
-                          : "border-white/20 bg-white/5 text-white/90 hover:border-white/30 hover:bg-white/10",
-                      ),
-                  disabled && "pointer-events-none opacity-50",
+                  "font-medium uppercase tracking-wide text-violet-300/80",
+                  isDialog ? "text-[10px]" : "text-[11px]",
                 )}
               >
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => onGenresChange(toggleId(selectedGenreIds, g.id))}
-                >
-                  {g.name}
-                </button>
-              </Badge>
-            );
-          })}
+                Most used
+              </p>
+              <div className={cn("flex flex-wrap", isDialog ? "gap-2" : "gap-1.5")}>
+                {popularGenres.map((g) => (
+                  <GenreChip
+                    key={g.id}
+                    genre={g}
+                    popular
+                    selected={selectedGenreIds.includes(g.id)}
+                    isDialog={isDialog}
+                    disabled={disabled}
+                    onToggle={() =>
+                      onGenresChange(toggleId(selectedGenreIds, g.id))
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
+          <div className={cn("flex flex-wrap", isDialog ? "gap-2" : "gap-1.5")}>
+            {otherGenres.map((g) => (
+              <GenreChip
+                key={g.id}
+                genre={g}
+                popular={false}
+                selected={selectedGenreIds.includes(g.id)}
+                isDialog={isDialog}
+                disabled={disabled}
+                onToggle={() =>
+                  onGenresChange(toggleId(selectedGenreIds, g.id))
+                }
+              />
+            ))}
+          </div>
         </div>
       </section>
 
