@@ -1,5 +1,4 @@
 import { ImageResponse } from "next/og";
-import sharp from "sharp";
 
 import { PLAYLIST_COVER_BG, PLAYLIST_COVER_FG } from "@/lib/playlist/coverStyle";
 
@@ -28,6 +27,16 @@ function wrapCoverTitle(title: string): string[] {
 }
 
 export async function renderPlaylistCoverJpeg(title: string): Promise<Buffer> {
+  // `sharp` is platform-specific. Import it lazily so missing linux-x64 binaries
+  // don't crash unrelated endpoints (e.g. GET /api/playlists).
+  const sharpMod = await import("sharp").catch(() => null);
+  const sharp = sharpMod?.default;
+  if (!sharp) {
+    throw new Error(
+      "sharp module missing (required to render playlist cover JPEG on this runtime)",
+    );
+  }
+
   const lines = wrapCoverTitle(title);
   const longest = Math.max(...lines.map((l) => l.length));
   const fontSize =
