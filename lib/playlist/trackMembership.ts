@@ -1,5 +1,11 @@
 import { ratingMatchesPlaylistFilters } from "@/lib/playlist/matchRating";
 import { wamPlaylistFiltersFromRow } from "@/lib/playlist/loadMatchedTracks";
+import { rankTrackByScore, rankTrackInIdSet } from "@/lib/playlist/trackRank";
+import {
+  spotifyPlaylistRankHref,
+  spotifyPlaylistWebUrl,
+  wamPlaylistRankHref,
+} from "@/lib/playlist/urls";
 import type { PlaylistTracksRow } from "@/lib/spotify/playlistTracksDb";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
 import type { RatingDetail } from "@/lib/types/ratings";
@@ -19,11 +25,12 @@ function playlistHasTrack(row: PlaylistTracksRow | undefined, trackId: string): 
 
 export function playlistsContainingTrack(args: {
   trackId: string;
-  rating: RatingDetail | null;
+  ratings: RatingDetail[];
   wamPlaylists: WamPlaylistRow[];
   cachedPlaylists: PlaylistTracksRow[];
 }): TrackPlaylistsPayload {
-  const { trackId, rating, wamPlaylists, cachedPlaylists } = args;
+  const { trackId, ratings, wamPlaylists, cachedPlaylists } = args;
+  const rating = ratings.find((r) => r.spotify_id === trackId) ?? null;
   const cacheById = new Map(cachedPlaylists.map((row) => [row.playlist_id, row]));
   const wamSpotifyIds = new Set(
     wamPlaylists
@@ -33,19 +40,29 @@ export function playlistsContainingTrack(args: {
 
   const wam: TrackPlaylistHit[] = [];
   for (const pl of wamPlaylists) {
+    const filters = wamPlaylistFiltersFromRow(pl);
     const matchesFilters = Boolean(
-      rating && ratingMatchesPlaylistFilters(rating, wamPlaylistFiltersFromRow(pl)),
+      rating && ratingMatchesPlaylistFilters(rating, filters),
     );
-    const onSpotify = playlistHasTrack(cacheById.get(pl.spotify_playlist_id), trackId);
+    const cached = cacheById.get(pl.spotify_playlist_id);
+    const onSpotify = playlistHasTrack(cached, trackId);
     if (!matchesFilters && !onSpotify) continue;
 
-    const cached = cacheById.get(pl.spotify_playlist_id);
+    const matched = ratings.filter((r) => ratingMatchesPlaylistFilters(r, filters));
+    const rank = matchesFilters
+      ? rankTrackByScore(matched, trackId)
+      : rankTrackInIdSet(ratings, cached?.track_ids ?? [], trackId);
+
     wam.push({
       id: pl.id,
       name: pl.name,
-      href: `/playlists/${pl.id}`,
+      href: wamPlaylistRankHref(pl.id),
+      spotify_url: pl.spotify_playlist_id
+        ? spotifyPlaylistWebUrl(pl.spotify_playlist_id)
+        : null,
       image_url: cached?.image_url ?? null,
       source: "wam",
+      rank,
     });
   }
 
@@ -56,13 +73,19 @@ export function playlistsContainingTrack(args: {
     spotify.push({
       id: row.playlist_id,
       name: row.name?.trim() || "Untitled playlist",
-      href: `https://open.spotify.com/playlist/${encodeURIComponent(row.playlist_id)}`,
+      href: spotifyPlaylistRankHref(row.playlist_id),
+      spotify_url: spotifyPlaylistWebUrl(row.playlist_id),
       image_url: row.image_url,
       source: "spotify",
+      rank: rankTrackInIdSet(ratings, row.track_ids, trackId),
     });
   }
 
   wam.sort(sortByName);
   spotify.sort(sortByName);
-  return { wam, spotify };
+  return {
+    platform: rankTrackByScore(ratings, trackId),
+    wam,
+    spotify,
+  };
 }

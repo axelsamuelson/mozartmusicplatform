@@ -2,89 +2,93 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { ExternalLink, ListMusic } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ListMusic } from "lucide-react";
 
 import { PlaylistCover } from "@/components/PlaylistCover";
-import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { glassCardTight, sectionHeading } from "@/lib/wamUi";
-import type { TrackPlaylistHit, TrackPlaylistsPayload } from "@/lib/types/trackPlaylists";
+import type {
+  TrackPlaylistHit,
+  TrackPlaylistsPayload,
+  TrackRank,
+} from "@/lib/types/trackPlaylists";
 import { cn } from "@/lib/utils";
 
-function PlaylistRow({
-  playlist,
-  external,
+export function RankLabel({
+  rank,
+  className,
 }: {
-  playlist: TrackPlaylistHit;
-  external?: boolean;
+  rank: TrackRank;
+  className?: string;
 }) {
-  const cover = (
-    <div className="relative size-11 shrink-0 overflow-hidden rounded-md border border-white/10 bg-white/10">
-      {playlist.source === "wam" && !playlist.image_url ? (
-        <PlaylistCover name={playlist.name} className="size-11 p-1 text-[9px]" />
-      ) : playlist.image_url ? (
-        <Image
-          src={playlist.image_url}
-          alt=""
-          width={44}
-          height={44}
-          className="size-11 object-cover"
-        />
+  return (
+    <span className={cn("shrink-0 tabular-nums", className)}>
+      #{rank.position}
+      <span className="text-white/35"> of {rank.total}</span>
+    </span>
+  );
+}
+
+function PlaylistRow({ playlist }: { playlist: TrackPlaylistHit }) {
+  return (
+    <div className={cn(glassCardTight, "flex items-center gap-2 p-2 md:p-2")}>
+      <Link
+        href={playlist.href}
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg py-0.5 transition-colors hover:text-wam"
+      >
+        <div className="relative size-11 shrink-0 overflow-hidden rounded-md border border-white/10 bg-white/10">
+          {playlist.source === "wam" && !playlist.image_url ? (
+            <PlaylistCover name={playlist.name} className="size-11 p-1 text-[9px]" />
+          ) : playlist.image_url ? (
+            <Image
+              src={playlist.image_url}
+              alt=""
+              width={44}
+              height={44}
+              className="size-11 object-cover"
+            />
+          ) : null}
+        </div>
+        <span className="min-w-0 flex-1 truncate text-sm font-medium text-white">
+          {playlist.name}
+        </span>
+        {playlist.rank ? (
+          <RankLabel rank={playlist.rank} className="text-xs text-white/55" />
+        ) : null}
+      </Link>
+      {playlist.spotify_url ? (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0 rounded-full border-white/20 bg-transparent px-3 text-xs text-white hover:bg-white/10"
+          asChild
+        >
+          <a href={playlist.spotify_url} target="_blank" rel="noopener noreferrer">
+            Spotify
+          </a>
+        </Button>
       ) : null}
     </div>
-  );
-
-  const body = (
-    <>
-      {cover}
-      <span className="min-w-0 flex-1 truncate text-sm font-medium text-white">
-        {playlist.name}
-      </span>
-      <Badge variant="outline" className="shrink-0 border-white/20 text-[10px] text-white/70">
-        {playlist.source === "wam" ? "WAM" : "Spotify"}
-      </Badge>
-      {external ? (
-        <ExternalLink className="size-3.5 shrink-0 text-white/40" aria-hidden />
-      ) : null}
-    </>
-  );
-
-  const className = cn(
-    glassCardTight,
-    "flex items-center gap-3 p-2 transition-colors hover:bg-white/[0.09] md:p-2",
-  );
-
-  if (external) {
-    return (
-      <a
-        href={playlist.href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className={className}
-      >
-        {body}
-      </a>
-    );
-  }
-
-  return (
-    <Link href={playlist.href} className={className}>
-      {body}
-    </Link>
   );
 }
 
 export function TrackPlaylists({
   spotifyId,
   refreshKey,
+  onPlatformRank,
 }: {
   spotifyId: string;
   refreshKey: number;
+  onPlatformRank?: (rank: TrackRank | null) => void;
 }) {
   const [data, setData] = useState<TrackPlaylistsPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const onPlatformRankRef = useRef(onPlatformRank);
+  onPlatformRankRef.current = onPlatformRank;
 
   useEffect(() => {
     const ac = new AbortController();
@@ -99,12 +103,19 @@ export function TrackPlaylists({
           error?: string;
         };
         if (!res.ok) throw new Error(body.error || res.statusText);
-        setData({ wam: body.wam ?? [], spotify: body.spotify ?? [] });
+        const next: TrackPlaylistsPayload = {
+          platform: body.platform ?? null,
+          wam: body.wam ?? [],
+          spotify: body.spotify ?? [],
+        };
+        setData(next);
+        onPlatformRankRef.current?.(next.platform);
       })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === "AbortError") return;
         setError(e instanceof Error ? e.message : "Could not load playlists");
         setData(null);
+        onPlatformRankRef.current?.(null);
       })
       .finally(() => {
         if (!ac.signal.aborted) setLoading(false);
@@ -162,7 +173,7 @@ export function TrackPlaylists({
               <ul className="flex flex-col gap-2">
                 {data.spotify.map((pl) => (
                   <li key={pl.id}>
-                    <PlaylistRow playlist={pl} external />
+                    <PlaylistRow playlist={pl} />
                   </li>
                 ))}
               </ul>

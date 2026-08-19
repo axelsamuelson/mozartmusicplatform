@@ -9,13 +9,15 @@ import { toast } from "sonner";
 
 import { LoadingMark } from "@/components/LoadingMark";
 import { RatingForm } from "@/components/RatingForm";
-import { TrackPlaylists } from "@/components/TrackPlaylists";
+import { RankLabel, TrackPlaylists } from "@/components/TrackPlaylists";
+import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { userFacingFetchError } from "@/lib/http/fetchRetry";
 import { play, spotifyUri } from "@/lib/spotify/player";
 import { glassCardTight, glassPanel, pageHeading, pageSub, sectionHeading } from "@/lib/wamUi";
+import { cn } from "@/lib/utils";
 import type { ItemType } from "@/lib/spotify/api";
 import type {
   GenreTagRow,
@@ -23,6 +25,7 @@ import type {
   MoodTagRow,
   RatingDetail,
 } from "@/lib/types/ratings";
+import type { TrackRank } from "@/lib/types/trackPlaylists";
 
 const ALLOWED_TYPES: ItemType[] = ["track", "album"];
 
@@ -71,6 +74,7 @@ export function ItemView() {
   const [ratingLoading, setRatingLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
   const [playlistRefresh, setPlaylistRefresh] = useState(0);
+  const [platformRank, setPlatformRank] = useState<TrackRank | null>(null);
 
   useEffect(() => {
     if (typeRaw === "artist") {
@@ -91,6 +95,7 @@ export function ItemView() {
     setItemLoading(true);
     setItemError(null);
     setItem(null);
+    setPlatformRank(null);
 
     fetch(
       `/api/spotify/item/${encodeURIComponent(spotifyId)}?type=${encodeURIComponent(type)}`,
@@ -228,6 +233,30 @@ export function ItemView() {
               {item.artist_name ? (
                 <p className={pageSub}>{item.artist_name}</p>
               ) : null}
+              {item.type === "track" && platformRank ? (
+                <p className="flex flex-wrap items-center gap-2 text-sm text-white/60">
+                  {rating && Number.isFinite(rating.score) ? (
+                    <span
+                      className={cn(
+                        "inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold tabular-nums",
+                        scoreBadgeClass(rating.score),
+                      )}
+                    >
+                      {rating.score}
+                    </span>
+                  ) : null}
+                  <Link
+                    href="/profile/tracks"
+                    className="inline-flex items-baseline gap-1.5 transition-colors hover:text-white"
+                  >
+                    <RankLabel
+                      rank={platformRank}
+                      className="font-semibold text-white"
+                    />
+                    <span className="text-white/45">rated tracks</span>
+                  </Link>
+                </p>
+              ) : null}
               <Button
                 type="button"
                 disabled={playing}
@@ -244,6 +273,7 @@ export function ItemView() {
             <TrackPlaylists
               spotifyId={item.spotify_id}
               refreshKey={playlistRefresh}
+              onPlatformRank={setPlatformRank}
             />
           ) : null}
 
