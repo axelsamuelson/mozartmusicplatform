@@ -66,7 +66,7 @@ export function playbackFromSdkTrack(
     trackId: track.id,
     trackName: track.name,
     artistName: track.artists?.map((a) => a.name).join(", ") ?? "",
-    artistId: artistIdFromUri(track.artists?.[0]?.uri) ?? base.artistId,
+    artistId: artistIdFromUri(track.artists?.[0]?.uri),
     imageUrl: track.album?.images?.[0]?.url ?? null,
     durationMs:
       typeof track.duration_ms === "number" && track.duration_ms > 0

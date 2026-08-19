@@ -150,6 +150,7 @@ export function Player() {
     uri: null,
     name: null,
   });
+  const ratingTrackIdRef = useRef<string | null>(null);
   const hostSyncTriggerRef = useRef<() => void>(() => {});
   const refreshAfterTransportRef = useRef<() => Promise<void>>(async () => {});
   const lastRefreshAfterTransportAtRef = useRef(0);
@@ -472,9 +473,12 @@ export function Player() {
 
   useEffect(() => {
     if (!hasUser || !nowTrackId) {
+      ratingTrackIdRef.current = null;
       setCurrentTrackRating(null);
       return;
     }
+    ratingTrackIdRef.current = nowTrackId;
+    setCurrentTrackRating(null);
     const ac = new AbortController();
     void fetchWithRetry(`/api/ratings?spotify_id=${encodeURIComponent(nowTrackId)}`, {
       signal: ac.signal,
@@ -484,7 +488,7 @@ export function Player() {
           error?: string;
           rating?: RatingDetail | null;
         };
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted || ratingTrackIdRef.current !== nowTrackId) return;
         if (!res.ok) {
           setCurrentTrackRating(null);
           return;
@@ -492,7 +496,9 @@ export function Player() {
         setCurrentTrackRating(body.rating ?? null);
       })
       .catch(() => {
-        if (!ac.signal.aborted) setCurrentTrackRating(null);
+        if (!ac.signal.aborted && ratingTrackIdRef.current === nowTrackId) {
+          setCurrentTrackRating(null);
+        }
       });
     return () => ac.abort();
   }, [hasUser, nowTrackId]);
@@ -703,6 +709,7 @@ export function Player() {
           <div className="relative size-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-white/10">
             {artUrl ? (
               <Image
+                key={nowTrackId ?? "none"}
                 src={artUrl}
                 alt=""
                 width={40}
@@ -750,7 +757,6 @@ export function Player() {
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
-            <RecentlyPlayed />
             <LiveSessionButton canStart={Boolean(canShowRate)} />
             {canShowRate ? (
               <button
@@ -799,7 +805,7 @@ export function Player() {
             <span>{formatMs(duration)}</span>
           </div>
         </div>
-        <div className="flex items-center justify-center gap-8 px-4 pb-3 pt-2">
+        <div className="flex items-center justify-between gap-4 px-4 pb-3 pt-2">
           <button
             type="button"
             aria-label="Previous"
@@ -820,14 +826,17 @@ export function Player() {
               <Pause className="size-[18px] fill-current" />
             )}
           </button>
-          <button
-            type="button"
-            aria-label="Next"
-            className="rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            onClick={onNextTrack}
-          >
-            <SkipForward className="size-5" />
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              aria-label="Next"
+              className="rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+              onClick={onNextTrack}
+            >
+              <SkipForward className="size-5" />
+            </button>
+            <RecentlyPlayed />
+          </div>
         </div>
       </div>
 
@@ -837,6 +846,7 @@ export function Player() {
           <div className="relative size-9 shrink-0 overflow-hidden rounded-md border border-white/10 bg-white/10 md:size-12 md:rounded-lg">
             {artUrl ? (
               <Image
+                key={nowTrackId ?? "none"}
                 src={artUrl}
                 alt=""
                 width={48}
@@ -921,6 +931,7 @@ export function Player() {
             >
               <SkipForward className="size-4" />
             </button>
+            <RecentlyPlayed />
           </div>
           <div className="flex w-full flex-col gap-1.5">
             <div className="flex w-full items-center gap-2">
@@ -952,7 +963,6 @@ export function Player() {
         </div>
 
         <div className="order-3 hidden min-h-0 flex-1 basis-0 items-center justify-end gap-4 md:order-none md:flex md:pl-3">
-          <RecentlyPlayed />
           <LiveSessionButton canStart={Boolean(canShowRate)} />
           {canShowRate ? (
             <button

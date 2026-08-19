@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 
 import { CACHE_NO_STORE } from "@/lib/spotify/cacheHeaders";
 import {
@@ -102,7 +102,8 @@ async function enrichPlayback(
   };
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const fresh = request.nextUrl.searchParams.get("fresh") === "1";
   const supabase = await createClient();
   const {
     data: { user },
@@ -133,7 +134,7 @@ export async function GET() {
     );
   }
 
-  const deduped = getDedupedPlayback(user.id);
+  const deduped = fresh ? null : getDedupedPlayback(user.id);
   if (deduped) {
     if (IS_DEV) {
       console.log("[playback] dedup hit", {

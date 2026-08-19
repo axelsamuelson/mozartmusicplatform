@@ -59,7 +59,7 @@ function isSdkPrimary(state: PlaybackState | null): boolean {
 export type UnifiedPlaybackControls = {
   playback: PlaybackState | null;
   displayProgressMs: number;
-  applyPlayback: (next: PlaybackState, options?: { broadcast?: boolean }) => void;
+  applyPlayback: (next: PlaybackState, options?: { broadcast?: boolean }) => boolean;
   fetchApiPlayback: (force?: boolean) => Promise<void>;
   refreshAfterTransport: () => Promise<void>;
   clearTimers: () => void;
@@ -137,7 +137,7 @@ export function useUnifiedPlayback(options: {
   }, []);
 
   const applyPlayback = useCallback(
-    (next: PlaybackState, opts?: { broadcast?: boolean }) => {
+    (next: PlaybackState, opts?: { broadcast?: boolean }): boolean => {
       const ignoreUntil = skipIgnoreUntilRef.current;
       const ignoreIds = skipIgnoreIdsRef.current;
       if (
@@ -145,7 +145,7 @@ export function useUnifiedPlayback(options: {
         next.trackId &&
         ignoreIds.has(next.trackId)
       ) {
-        return;
+        return false;
       }
       if (next.trackId && ignoreIds.size > 0 && !ignoreIds.has(next.trackId)) {
         clearSkipTransition();
@@ -166,6 +166,7 @@ export function useUnifiedPlayback(options: {
       if (opts?.broadcast !== false) {
         broadcastPlayback(merged);
       }
+      return true;
     },
     [clearSkipTransition, notifyTrackChanged],
   );
@@ -190,6 +191,9 @@ export function useUnifiedPlayback(options: {
           progressMsAtSync: 0,
           syncedAt: Date.now(),
         });
+      }
+      if (current?.source === "api") {
+        void fetchApiPlaybackRef.current(true);
       }
     },
     [applyPlayback],
@@ -264,7 +268,9 @@ export function useUnifiedPlayback(options: {
     [clearEarlySkipTimers, isUserActive],
   );
 
-  const fetchApiPlaybackRef = useRef<() => Promise<void>>(async () => {});
+  const fetchApiPlaybackRef = useRef<(force?: boolean) => Promise<void>>(
+    async () => {},
+  );
 
   const fetchApiPlayback = useCallback(async (force = false) => {
     if (
@@ -279,12 +285,15 @@ export function useUnifiedPlayback(options: {
     if (!isLeaderRef.current && playbackRef.current) {
       return;
     }
-    if (isSdkPrimary(playbackRef.current)) {
+    if (!force && isSdkPrimary(playbackRef.current)) {
       return;
     }
 
     try {
-      const res = await fetch("/api/spotify/playback", { cache: "no-store" });
+      const url = force
+        ? "/api/spotify/playback?fresh=1"
+        : "/api/spotify/playback";
+      const res = await fetch(url, { cache: "no-store" });
       const circuit = res.headers.get("X-WAM-Circuit");
       setLastPlaybackCircuitHeader(circuit);
       if (circuit === "open") {
@@ -325,43 +334,43 @@ export function useUnifiedPlayback(options: {
 
   const scheduleTransportPolls = useCallback(() => {
     clearTransportPollTimers();
+    void fetchApiPlaybackRef.current(true);
     for (const delay of TRANSPORT_POLL_DELAYS_MS) {
       const id = setTimeout(() => {
-        void fetchApiPlaybackRef.current();
+        void fetchApiPlaybackRef.current(true);
       }, delay);
       transportPollTimersRef.current.push(id);
     }
   }, [clearTransportPollTimers]);
 
   const applySdkState = useCallback(
-    (state: Parameters<typeof sdkStateToPlayback>[0]) => {
+    (state: Parameters<typeof sdkStateToPlayback>[0]): boolean => {
       const mapped = sdkStateToPlayback(state);
       if (mapped) {
         clearTimers();
-        applyPlayback(mapped);
-        return;
+        return applyPlayback(mapped);
       }
       if (!isSdkPrimary(playbackRef.current)) {
         void fetchApiPlayback();
       }
+      return false;
     },
     [applyPlayback, clearTimers, fetchApiPlayback],
   );
 
   const refreshAfterTransport = useCallback(async () => {
-    if (isSdkPrimary(playbackRef.current) || playbackReady) {
+    if (isSdkPrimary(playbackRef.current)) {
       try {
         const s = await getCurrentState();
-        if (s) {
-          applySdkState(s);
+        if (s && applySdkState(s)) {
           return;
         }
       } catch {
-        /* fall through */
+        /* fall through to API */
       }
     }
-    await fetchApiPlayback();
-  }, [applySdkState, fetchApiPlayback, playbackReady]);
+    await fetchApiPlayback(true);
+  }, [applySdkState, fetchApiPlayback]);
 
   // Leader election
   useEffect(() => {
