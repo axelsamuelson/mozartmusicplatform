@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { topArtistsFromTrackScores } from "@/lib/profile/aggregateRatings";
-import { loadAllUserRatings } from "@/lib/ratings/normalize";
+import { loadAllUserRatingsSlim } from "@/lib/ratings/normalize";
 import { createClient } from "@/lib/supabase/server";
 
 export async function GET() {
@@ -14,6 +14,6 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const ratings = await loadAllUserRatings(supabase, user.id);
+  const ratings = await loadAllUserRatingsSlim(supabase, user.id, "track");
   return NextResponse.json({ artists: topArtistsFromTrackScores(ratings) });
 }

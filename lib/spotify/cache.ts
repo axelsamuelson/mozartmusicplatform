@@ -32,6 +32,8 @@ type SpotifyCacheRow = {
 export type CachedSpotifyRequestOptions = {
   /** Skip cache read/write and always call fetcher (e.g. force sync). */
   bypass?: boolean;
+  /** Fresh `spotify_cache` row was used — no Spotify round trip. */
+  onFreshHit?: () => void;
 };
 
 function isDev(): boolean {
@@ -106,6 +108,7 @@ export async function cachedSpotifyRequest<T>(
 
   if (!options?.bypass && existing && isFresh(existing)) {
     logCache("HIT", key);
+    options?.onFreshHit?.();
     return existing.data as T;
   }
 

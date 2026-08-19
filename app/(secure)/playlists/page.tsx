@@ -22,6 +22,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { capRetryAfterSec } from "@/lib/spotify/errors";
+import { loadTagsCatalog } from "@/lib/ratings/tagsCache";
 import type { GenreTagRow, MomentTagRow } from "@/lib/types/ratings";
 import type { PlaylistSortOrder, WamPlaylistRow } from "@/lib/types/playlists";
 import { glassCard, glassCardTight } from "@/lib/wamUi";
@@ -59,15 +60,7 @@ export default function PlaylistsPage() {
         if (!r.ok) throw new Error(b.error || r.statusText);
         return b.playlists ?? [];
       }),
-      fetch("/api/tags").then(async (r) => {
-        const b = (await r.json()) as {
-          genre_tags?: GenreTagRow[];
-          moment_tags?: MomentTagRow[];
-          error?: string;
-        };
-        if (!r.ok) throw new Error(b.error || r.statusText);
-        return b;
-      }),
+      loadTagsCatalog(),
     ])
       .then(([pl, tags]) => {
         setPlaylists(pl);

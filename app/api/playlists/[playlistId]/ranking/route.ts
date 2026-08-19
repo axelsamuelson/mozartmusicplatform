@@ -46,17 +46,19 @@ export async function GET(
   const pl = row as WamPlaylistRow;
 
   try {
-    const matched = await loadMatchedPlaylistTracks(supabase, user.id, pl);
-    const { data: cached } = await supabase
-      .from("playlist_tracks")
-      .select("image_url")
-      .eq("user_id", user.id)
-      .eq("playlist_id", pl.spotify_playlist_id)
-      .maybeSingle();
+    const [matched, cached] = await Promise.all([
+      loadMatchedPlaylistTracks(supabase, user.id, pl),
+      supabase
+        .from("playlist_tracks")
+        .select("image_url")
+        .eq("user_id", user.id)
+        .eq("playlist_id", pl.spotify_playlist_id)
+        .maybeSingle(),
+    ]);
 
     const image_url =
-      typeof cached?.image_url === "string" && cached.image_url.length > 0
-        ? cached.image_url
+      typeof cached.data?.image_url === "string" && cached.data.image_url.length > 0
+        ? cached.data.image_url
         : null;
 
     const payload: PlaylistRankingPayload = {

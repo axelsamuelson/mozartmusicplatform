@@ -61,11 +61,15 @@ export async function GET(
   const cacheKey = `item:${id}:${type}`;
 
   let payload: CachedItemPayload;
+  let cacheHit = false;
   try {
     payload = await cachedSpotifyRequest(
       cacheKey,
       SPOTIFY_CACHE_TTL.item,
       () => fetchSpotifyItem(id, type),
+      { onFreshHit: () => {
+        cacheHit = true;
+      } },
     );
   } catch (e) {
     if (
@@ -107,6 +111,16 @@ export async function GET(
     } else {
       const message = e instanceof Error ? e.message : "Spotify request failed";
       return NextResponse.json({ error: message }, { status: 502 });
+    }
+  }
+
+  if (cacheHit) {
+    const dbItem = await loadCachedItemFromDb(supabase, id);
+    if (dbItem) {
+      return NextResponse.json(
+        { item: dbItem },
+        { headers: { "Cache-Control": CACHE_PRIVATE_86400 } },
+      );
     }
   }
 

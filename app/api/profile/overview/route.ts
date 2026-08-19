@@ -6,7 +6,7 @@ import {
   buildMoodLevelBars,
   buildTopTracksAlbumsArtists,
 } from "@/lib/profile/aggregateRatings";
-import { loadAllUserRatings } from "@/lib/ratings/normalize";
+import { loadAllUserRatingsSlim } from "@/lib/ratings/normalize";
 import { createClient } from "@/lib/supabase/server";
 import type { MoodTagRow } from "@/lib/types/ratings";
 
@@ -22,7 +22,7 @@ export async function GET() {
 
   const [moodsRes, ratings] = await Promise.all([
     supabase.from("mood_tags").select("id, level, name, description, color").order("level"),
-    loadAllUserRatings(supabase, user.id),
+    loadAllUserRatingsSlim(supabase, user.id),
   ]);
 
   if (moodsRes.error) {

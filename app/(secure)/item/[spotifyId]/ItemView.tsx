@@ -14,6 +14,7 @@ import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { loadTagsCatalog } from "@/lib/ratings/tagsCache";
 import { userFacingFetchError } from "@/lib/http/fetchRetry";
 import { play, spotifyUri } from "@/lib/spotify/player";
 import { glassCardTight, glassPanel, pageHeading, pageSub, sectionHeading } from "@/lib/wamUi";
@@ -22,7 +23,6 @@ import type { ItemType } from "@/lib/spotify/api";
 import type {
   GenreTagRow,
   MomentTagRow,
-  MoodTagRow,
   RatingDetail,
 } from "@/lib/types/ratings";
 import type { TrackRank } from "@/lib/types/trackPlaylists";
@@ -65,7 +65,6 @@ export function ItemView() {
   const [itemLoading, setItemLoading] = useState(true);
 
   const [genreTags, setGenreTags] = useState<GenreTagRow[]>([]);
-  const [moodTags, setMoodTags] = useState<MoodTagRow[]>([]);
   const [momentTags, setMomentTags] = useState<MomentTagRow[]>([]);
   const [tagsError, setTagsError] = useState<string | null>(null);
   const [tagsLoading, setTagsLoading] = useState(false);
@@ -117,29 +116,15 @@ export function ItemView() {
         if (!ac.signal.aborted) setItemLoading(false);
       });
 
-    return () => ac.abort();
-  }, [spotifyId, type, typeRaw]);
-
-  useEffect(() => {
-    if (!spotifyId || !type || itemLoading || itemError || !item) return;
-
-    const ac = new AbortController();
     setTagsLoading(true);
     setRatingLoading(true);
     setTagsError(null);
 
-    fetch("/api/tags", { signal: ac.signal })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          genre_tags?: GenreTagRow[];
-          mood_tags?: MoodTagRow[];
-          moment_tags?: MomentTagRow[];
-        };
-        if (!res.ok) throw new Error(body.error || "Failed to load tags");
-        setGenreTags(body.genre_tags ?? []);
-        setMoodTags(body.mood_tags ?? []);
-        setMomentTags(body.moment_tags ?? []);
+    loadTagsCatalog(ac.signal)
+      .then((catalog) => {
+        if (ac.signal.aborted) return;
+        setGenreTags(catalog.genre_tags);
+        setMomentTags(catalog.moment_tags);
       })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === "AbortError") return;
@@ -169,7 +154,7 @@ export function ItemView() {
       });
 
     return () => ac.abort();
-  }, [spotifyId, type, item, itemLoading, itemError]);
+  }, [spotifyId, type, typeRaw]);
 
   const handleSaved = useCallback((r: RatingDetail) => {
     setRating(r);

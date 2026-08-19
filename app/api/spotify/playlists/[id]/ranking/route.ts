@@ -2,9 +2,9 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { rankedTracksByScore } from "@/lib/playlist/trackRank";
 import { spotifyPlaylistWebUrl } from "@/lib/playlist/urls";
-import { loadAllUserRatings } from "@/lib/ratings/normalize";
+import { loadUserRatingsBySpotifyIds } from "@/lib/ratings/normalize";
 import { CACHE_NO_STORE } from "@/lib/spotify/cacheHeaders";
-import { loadUserPlaylistTracksMap } from "@/lib/spotify/playlistTracksDb";
+import { loadPlaylistTracksRow } from "@/lib/spotify/playlistTracksDb";
 import { createClient } from "@/lib/supabase/server";
 import type { PlaylistRankingPayload } from "@/lib/types/trackPlaylists";
 
@@ -28,12 +28,7 @@ export async function GET(
   }
 
   try {
-    const [cachedMap, ratings] = await Promise.all([
-      loadUserPlaylistTracksMap(supabase, user.id),
-      loadAllUserRatings(supabase, user.id),
-    ]);
-
-    const row = cachedMap.get(playlistId);
+    const row = await loadPlaylistTracksRow(supabase, user.id, playlistId);
     if (!row) {
       return NextResponse.json(
         { error: "Playlist not synced yet. Open Playlists → Spotify to sync it." },
@@ -41,9 +36,12 @@ export async function GET(
       );
     }
 
-    const idSet = new Set(row.track_ids);
-    const inPlaylist = ratings.filter((r) => idSet.has(r.spotify_id));
-    const tracks = rankedTracksByScore(inPlaylist);
+    const ratings = await loadUserRatingsBySpotifyIds(
+      supabase,
+      user.id,
+      row.track_ids,
+    );
+    const tracks = rankedTracksByScore(ratings);
 
     const payload: PlaylistRankingPayload = {
       playlist: {

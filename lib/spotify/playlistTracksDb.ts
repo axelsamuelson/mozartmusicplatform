@@ -63,28 +63,79 @@ export async function loadUserPlaylistTracksMap(
 
   const map = new Map<string, PlaylistTracksRow>();
   for (const row of data ?? []) {
-    const track_ids = Array.isArray(row.track_ids)
-      ? (row.track_ids as string[]).filter(
-          (id) => typeof id === "string" && id.length > 0,
-        )
-      : [];
-    map.set(row.playlist_id as string, {
-      user_id: row.user_id as string,
-      playlist_id: row.playlist_id as string,
-      total_tracks: (row.total_tracks as number) ?? 0,
-      track_ids,
-      last_synced_at: row.last_synced_at as string,
-      name:
-        typeof row.name === "string" && row.name.trim().length > 0
-          ? row.name.trim()
-          : null,
-      image_url:
-        typeof row.image_url === "string" && row.image_url.length > 0
-          ? row.image_url
-          : null,
-    });
+    map.set(row.playlist_id as string, parsePlaylistTracksRow(row));
   }
   return map;
+}
+
+export async function loadPlaylistTracksRow(
+  supabase: SupabaseClient,
+  userId: string,
+  playlistId: string,
+): Promise<PlaylistTracksRow | null> {
+  const { data, error } = await supabase
+    .from("playlist_tracks")
+    .select(
+      "user_id, playlist_id, total_tracks, track_ids, last_synced_at, name, image_url",
+    )
+    .eq("user_id", userId)
+    .eq("playlist_id", playlistId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  return data ? parsePlaylistTracksRow(data) : null;
+}
+
+export async function loadPlaylistsContainingTrack(
+  supabase: SupabaseClient,
+  userId: string,
+  trackId: string,
+): Promise<PlaylistTracksRow[]> {
+  const { data, error } = await supabase
+    .from("playlist_tracks")
+    .select(
+      "user_id, playlist_id, total_tracks, track_ids, last_synced_at, name, image_url",
+    )
+    .eq("user_id", userId)
+    .contains("track_ids", [trackId]);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+  return (data ?? []).map((row) => parsePlaylistTracksRow(row));
+}
+
+function parsePlaylistTracksRow(row: {
+  user_id: unknown;
+  playlist_id: unknown;
+  total_tracks?: unknown;
+  track_ids?: unknown;
+  last_synced_at: unknown;
+  name?: unknown;
+  image_url?: unknown;
+}): PlaylistTracksRow {
+  const track_ids = Array.isArray(row.track_ids)
+    ? (row.track_ids as string[]).filter(
+        (id) => typeof id === "string" && id.length > 0,
+      )
+    : [];
+  return {
+    user_id: row.user_id as string,
+    playlist_id: row.playlist_id as string,
+    total_tracks: (row.total_tracks as number) ?? 0,
+    track_ids,
+    last_synced_at: row.last_synced_at as string,
+    name:
+      typeof row.name === "string" && row.name.trim().length > 0
+        ? row.name.trim()
+        : null,
+    image_url:
+      typeof row.image_url === "string" && row.image_url.length > 0
+        ? row.image_url
+        : null,
+  };
 }
 
 export async function upsertPlaylistTracks(

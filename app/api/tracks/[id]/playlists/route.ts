@@ -1,9 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 
 import { playlistsContainingTrack } from "@/lib/playlist/trackMembership";
-import { loadAllUserRatings } from "@/lib/ratings/normalize";
+import { loadAllUserRatingsSlim } from "@/lib/ratings/normalize";
 import { CACHE_NO_STORE } from "@/lib/spotify/cacheHeaders";
-import { loadUserPlaylistTracksMap } from "@/lib/spotify/playlistTracksDb";
+import { loadPlaylistsContainingTrack } from "@/lib/spotify/playlistTracksDb";
 import { createClient } from "@/lib/supabase/server";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
 
@@ -27,10 +27,10 @@ export async function GET(
   }
 
   try {
-    const [wamRes, ratings, cachedMap] = await Promise.all([
+    const [wamRes, ratings, cachedPlaylists] = await Promise.all([
       supabase.from("wam_playlists").select("*").eq("user_id", user.id),
-      loadAllUserRatings(supabase, user.id),
-      loadUserPlaylistTracksMap(supabase, user.id),
+      loadAllUserRatingsSlim(supabase, user.id, "track"),
+      loadPlaylistsContainingTrack(supabase, user.id, trackId),
     ]);
 
     if (wamRes.error) {
@@ -41,7 +41,7 @@ export async function GET(
       trackId,
       ratings,
       wamPlaylists: (wamRes.data ?? []) as WamPlaylistRow[],
-      cachedPlaylists: [...cachedMap.values()],
+      cachedPlaylists,
     });
 
     return NextResponse.json(payload, {

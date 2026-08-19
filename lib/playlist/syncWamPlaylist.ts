@@ -14,6 +14,7 @@ import { replacePlaylistTracks } from "@/lib/spotify/userPlaylistSpotify";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
 import type { RatingDetail } from "@/lib/types/ratings";
 import type { WamPlaylistRow } from "@/lib/types/playlists";
+import { loadAllUserRatingsSlim } from "@/lib/ratings/normalize";
 
 function filtersFromRow(pl: WamPlaylistRow): WamPlaylistFilters {
   return wamPlaylistFiltersFromRow(pl);
@@ -25,10 +26,17 @@ export async function syncWamPlaylistToSpotify(
   userId: string,
   pl: WamPlaylistRow,
   accessToken: string,
+  preloadedRatings?: RatingDetail[],
 ): Promise<{ track_count: number }> {
   await assertWamOwned(pl.spotify_playlist_id, userId);
 
-  const sorted = await loadMatchedPlaylistTracks(supabase, userId, pl);
+  const sorted = await loadMatchedPlaylistTracks(
+    supabase,
+    userId,
+    pl,
+    undefined,
+    preloadedRatings,
+  );
   const uris = trackUrisFromRatings(sorted);
 
   await replacePlaylistTracks(accessToken, pl.spotify_playlist_id, uris);
@@ -95,6 +103,8 @@ export async function syncWamPlaylistsForRating(
 
   if (targets.length === 0) return;
 
+  const ratings = await loadAllUserRatingsSlim(supabase, userId, "track");
+
   if (process.env.NODE_ENV === "development") {
     console.log(
       "[auto-sync] syncing playlists for track",
@@ -110,6 +120,7 @@ export async function syncWamPlaylistsForRating(
         userId,
         pl,
         accessToken,
+        ratings,
       );
       if (process.env.NODE_ENV === "development") {
         console.log("[auto-sync] ok", pl.name, track_count, "tracks");

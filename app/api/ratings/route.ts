@@ -6,10 +6,33 @@ import { createClient } from "@/lib/supabase/server";
 import { parseOptionalScale1to10 } from "@/lib/ratings/parseScale";
 import {
   fetchRatingById,
+  loadAllUserRatings,
   normalizeRating,
   RATING_SELECT,
 } from "@/lib/ratings/normalize";
 import type { DashboardStats } from "@/lib/types/ratings";
+
+function statsFromScoreRows(
+  rows: Array<{ score?: unknown; updated_at?: unknown }>,
+): DashboardStats {
+  const total_rated = rows.length;
+  const avg_score =
+    total_rated > 0
+      ? Math.round(
+          (rows.reduce((a, r) => a + Number(r.score ?? 0), 0) / total_rated) * 10,
+        ) / 10
+      : 0;
+
+  const monthStart = new Date();
+  monthStart.setDate(1);
+  monthStart.setHours(0, 0, 0, 0);
+  const startIso = monthStart.toISOString();
+  const rated_this_month = rows.filter(
+    (r) => String(r.updated_at) >= startIso,
+  ).length;
+
+  return { total_rated, avg_score, rated_this_month };
+}
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient();
@@ -24,19 +47,23 @@ export async function GET(request: NextRequest) {
   const spotifyId = request.nextUrl.searchParams.get("spotify_id")?.trim();
 
   if (request.nextUrl.searchParams.get("scores_only") === "1") {
-    const { data, error } = await supabase
-      .from("ratings")
-      .select("spotify_id, score")
-      .eq("user_id", user.id);
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 });
-    }
-
     const scores: Record<string, number> = {};
-    for (const r of data ?? []) {
-      const sid = r.spotify_id as string;
-      scores[sid] = r.score as number;
+    const page = 1000;
+    for (let from = 0; ; from += page) {
+      const { data, error } = await supabase
+        .from("ratings")
+        .select("spotify_id, score")
+        .eq("user_id", user.id)
+        .range(from, from + page - 1);
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      const rows = data ?? [];
+      for (const r of rows) {
+        const sid = r.spotify_id as string;
+        scores[sid] = r.score as number;
+      }
+      if (rows.length < page) break;
     }
     return NextResponse.json({ scores });
   }
@@ -73,65 +100,65 @@ export async function GET(request: NextRequest) {
       ? itemTypeParam
       : null;
 
+  const statsQuery = wantStats
+    ? supabase.from("ratings").select("score, updated_at").eq("user_id", user.id)
+    : null;
+
+  let ratings: ReturnType<typeof normalizeRating>[];
+
+  if (!limit) {
+    const [loaded, scoreRes] = await Promise.all([
+      loadAllUserRatings(supabase, user.id, itemTypeFilter ?? undefined),
+      statsQuery,
+    ]);
+    ratings = loaded;
+    if (scoreRes?.error) {
+      return NextResponse.json({ error: scoreRes.error.message }, { status: 500 });
+    }
+    if (!wantStats) {
+      return NextResponse.json({ ratings });
+    }
+    return NextResponse.json({
+      ratings,
+      stats: statsFromScoreRows(scoreRes?.data ?? []),
+    });
+  }
+
   let listQuery = supabase
     .from("ratings")
     .select(RATING_SELECT)
     .eq("user_id", user.id)
-    .order("updated_at", { ascending: false });
-  if (limit) listQuery = listQuery.limit(limit);
-
-  const { data, error } = await listQuery;
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    .order("updated_at", { ascending: false })
+    .limit(limit);
+  if (itemTypeFilter) {
+    listQuery = listQuery.eq("cached_items.type", itemTypeFilter);
   }
 
-  const ratings = (data ?? []).map((row) =>
+  const [listRes, scoreRes] = await Promise.all([
+    listQuery,
+    statsQuery ?? Promise.resolve({ data: null, error: null }),
+  ]);
+
+  if (listRes.error) {
+    return NextResponse.json({ error: listRes.error.message }, { status: 500 });
+  }
+
+  ratings = (listRes.data ?? []).map((row) =>
     normalizeRating(row as Record<string, unknown>),
   );
 
-  const filteredRatings = itemTypeFilter
-    ? ratings.filter((r) => r.item?.type === itemTypeFilter)
-    : ratings;
-
   if (!wantStats) {
-    return NextResponse.json({ ratings: filteredRatings });
+    return NextResponse.json({ ratings });
   }
 
-  const { data: scoreRows, error: scoreErr } = await supabase
-    .from("ratings")
-    .select("score, updated_at")
-    .eq("user_id", user.id);
-
-  if (scoreErr) {
-    return NextResponse.json({ error: scoreErr.message }, { status: 500 });
+  if (scoreRes.error) {
+    return NextResponse.json({ error: scoreRes.error.message }, { status: 500 });
   }
 
-  const rows = scoreRows ?? [];
-  const total_rated = rows.length;
-  const avg_score =
-    total_rated > 0
-      ? Math.round(
-          (rows.reduce((a, r) => a + (r.score as number), 0) / total_rated) *
-            10,
-        ) / 10
-      : 0;
-
-  const monthStart = new Date();
-  monthStart.setDate(1);
-  monthStart.setHours(0, 0, 0, 0);
-  const startIso = monthStart.toISOString();
-  const rated_this_month = rows.filter(
-    (r) => String(r.updated_at) >= startIso,
-  ).length;
-
-  const stats: DashboardStats = {
-    total_rated,
-    avg_score,
-    rated_this_month,
-  };
-
-  return NextResponse.json({ ratings: filteredRatings, stats });
+  return NextResponse.json({
+    ratings,
+    stats: statsFromScoreRows(scoreRes.data ?? []),
+  });
 }
 
 type PostBody = {

@@ -21,6 +21,7 @@ import {
   filtersStateKey,
   type PlaylistFiltersState,
 } from "@/lib/playlist/playlistFilters";
+import { loadTagsCatalog } from "@/lib/ratings/tagsCache";
 import { glassCard, glassCardTight } from "@/lib/wamUi";
 import type { GenreTagRow, MomentTagRow, RatingDetail } from "@/lib/types/ratings";
 import type { PlaylistSortOrder, WamPlaylistRow } from "@/lib/types/playlists";
@@ -46,6 +47,7 @@ export default function PlaylistDetailPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const previewAbortRef = useRef<AbortController | null>(null);
+  const skipInitialPreview = useRef(true);
 
   const filtersDirty =
     filters != null && filtersStateKey(filters) !== savedFiltersKey;
@@ -102,15 +104,7 @@ export default function PlaylistDetailPage() {
           return b;
         },
       ),
-      fetch("/api/tags", { signal: ac.signal }).then(async (r) => {
-        const b = (await r.json()) as {
-          genre_tags?: GenreTagRow[];
-          moment_tags?: MomentTagRow[];
-          error?: string;
-        };
-        if (!r.ok) throw new Error(b.error || r.statusText);
-        return b;
-      }),
+      loadTagsCatalog(ac.signal),
     ])
       .then(([plBody, tags]) => {
         const pl = plBody.playlist ?? null;
@@ -138,7 +132,15 @@ export default function PlaylistDetailPage() {
   }, [playlistId]);
 
   useEffect(() => {
+    skipInitialPreview.current = true;
+  }, [playlistId]);
+
+  useEffect(() => {
     if (!filters || loading) return;
+    if (skipInitialPreview.current) {
+      skipInitialPreview.current = false;
+      return;
+    }
     const t = window.setTimeout(() => {
       void fetchPreview(filters, sortOrder);
     }, 400);

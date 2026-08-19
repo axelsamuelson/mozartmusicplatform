@@ -4,7 +4,7 @@ import {
   artistScoreFromTrackRatings,
   isTrackRatingForArtist,
 } from "@/lib/profile/aggregateRatings";
-import { normalizeRating, RATING_SELECT } from "@/lib/ratings/normalize";
+import { loadAllUserRatingsSlim } from "@/lib/ratings/normalize";
 import { CACHE_PRIVATE_60 } from "@/lib/spotify/cacheHeaders";
 import {
   cachedSpotifyRequest,
@@ -109,26 +109,29 @@ export async function GET(
     { onConflict: "spotify_id" },
   );
 
-  const [topTracks, albums, ratingsRes] = await Promise.all([
-    optionalCatalog<ArtistTopTrack[]>(
-      `artist-top-tracks:${artistId}`,
-      () => fetchArtistTopTracks(artistId),
-      [],
-    ),
-    optionalCatalog<ArtistAlbumRow[]>(
-      `artist-albums:${artistId}`,
-      () => fetchArtistAlbums(artistId, 10),
-      [],
-    ),
-    supabase.from("ratings").select(RATING_SELECT).eq("user_id", user.id),
-  ]);
-
-  if (ratingsRes.error) {
-    return NextResponse.json({ error: ratingsRes.error.message }, { status: 500 });
+  let topTracks: ArtistTopTrack[];
+  let albums: ArtistAlbumRow[];
+  let ratings: Awaited<ReturnType<typeof loadAllUserRatingsSlim>>;
+  try {
+    [topTracks, albums, ratings] = await Promise.all([
+      optionalCatalog<ArtistTopTrack[]>(
+        `artist-top-tracks:${artistId}`,
+        () => fetchArtistTopTracks(artistId),
+        [],
+      ),
+      optionalCatalog<ArtistAlbumRow[]>(
+        `artist-albums:${artistId}`,
+        () => fetchArtistAlbums(artistId, 10),
+        [],
+      ),
+      loadAllUserRatingsSlim(supabase, user.id, "track"),
+    ]);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to load ratings";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 
-  const ratings = (ratingsRes.data ?? [])
-    .map((row) => normalizeRating(row as Record<string, unknown>))
+  const artistRatings = ratings
     .filter((r) => isTrackRatingForArtist(r, payload.spotify_id, payload.name))
     .sort(
       (a, b) =>
@@ -138,7 +141,7 @@ export async function GET(
         }),
     );
 
-  const stats = artistScoreFromTrackRatings(ratings);
+  const stats = artistScoreFromTrackRatings(artistRatings);
 
   return NextResponse.json(
     {
@@ -149,7 +152,7 @@ export async function GET(
         genres: payload.genres ?? [],
       },
       stats,
-      ratings,
+      ratings: artistRatings,
       top_tracks: topTracks,
       albums,
     },

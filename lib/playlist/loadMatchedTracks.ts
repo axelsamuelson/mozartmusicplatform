@@ -4,7 +4,7 @@ import {
 } from "@/lib/playlist/matchRating";
 import { filtersFromPlaylistRow } from "@/lib/playlist/playlistFilters";
 import { sortPlaylistRatings } from "@/lib/playlist/sortOrder";
-import { loadAllUserRatings } from "@/lib/ratings/normalize";
+import { loadAllUserRatingsSlim } from "@/lib/ratings/normalize";
 import type { RatingDetail } from "@/lib/types/ratings";
 import type { PlaylistSortOrder, WamPlaylistRow } from "@/lib/types/playlists";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -31,9 +31,11 @@ export async function loadMatchedPlaylistTracks(
   userId: string,
   row: WamPlaylistRow,
   sortOrder?: PlaylistSortOrder,
+  preloadedRatings?: RatingDetail[],
 ): Promise<RatingDetail[]> {
   const filters = wamPlaylistFiltersFromRow(row);
-  const ratings = await loadAllUserRatings(supabase, userId);
+  const ratings =
+    preloadedRatings ?? (await loadAllUserRatingsSlim(supabase, userId, "track"));
   const matched = ratings.filter((r) => ratingMatchesPlaylistFilters(r, filters));
   return sortPlaylistRatings(matched, sortOrder ?? row.sort_order);
 }
