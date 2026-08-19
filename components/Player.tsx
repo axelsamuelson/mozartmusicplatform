@@ -16,6 +16,7 @@ import {
 
 import { Slider } from "@/components/ui/slider";
 import { LiveSessionButton } from "@/components/LiveSessionButton";
+import { RecentlyPlayed } from "@/components/RecentlyPlayed";
 import {
   clearActiveLiveSession,
   getActiveLiveSession,
@@ -749,6 +750,7 @@ export function Player() {
             ) : null}
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <RecentlyPlayed />
             <LiveSessionButton canStart={Boolean(canShowRate)} />
             {canShowRate ? (
               <button
@@ -950,6 +952,7 @@ export function Player() {
         </div>
 
         <div className="order-3 hidden min-h-0 flex-1 basis-0 items-center justify-end gap-4 md:order-none md:flex md:pl-3">
+          <RecentlyPlayed />
           <LiveSessionButton canStart={Boolean(canShowRate)} />
           {canShowRate ? (
             <button

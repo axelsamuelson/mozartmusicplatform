@@ -9,7 +9,6 @@ import { toast } from "sonner";
 
 import { LoadingMark } from "@/components/LoadingMark";
 import { RatingForm } from "@/components/RatingForm";
-import { RecentlyPlayed } from "@/components/RecentlyPlayed";
 import { ScoreHistory } from "@/components/ScoreHistory";
 import { RankLabel, TrackPlaylists } from "@/components/TrackPlaylists";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
@@ -206,18 +205,15 @@ export function ItemView() {
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-10 px-4 pb-16 pt-24 md:px-6">
-      <div className="flex items-center gap-2">
-        <Button
-          variant="ghost"
-          className="w-fit rounded-full px-0 text-white/70 hover:bg-white/10 hover:text-white"
-          asChild
-        >
-          <Link href={type === "track" ? "/profile/tracks" : "/search"}>
-            {type === "track" ? "← Back to tracks" : "← Back to search"}
-          </Link>
-        </Button>
-        <RecentlyPlayed />
-      </div>
+      <Button
+        variant="ghost"
+        className="w-fit rounded-full px-0 text-white/70 hover:bg-white/10 hover:text-white"
+        asChild
+      >
+        <Link href={type === "track" ? "/profile/tracks" : "/search"}>
+          {type === "track" ? "← Back to tracks" : "← Back to search"}
+        </Link>
+      </Button>
 
       {itemLoading ? (
         <LoadingMark />
