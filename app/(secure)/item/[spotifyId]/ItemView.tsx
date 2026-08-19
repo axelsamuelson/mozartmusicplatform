@@ -9,6 +9,7 @@ import { toast } from "sonner";
 
 import { LoadingMark } from "@/components/LoadingMark";
 import { RatingForm } from "@/components/RatingForm";
+import { TrackPlaylists } from "@/components/TrackPlaylists";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -69,6 +70,7 @@ export function ItemView() {
   const [rating, setRating] = useState<RatingDetail | null>(null);
   const [ratingLoading, setRatingLoading] = useState(false);
   const [playing, setPlaying] = useState(false);
+  const [playlistRefresh, setPlaylistRefresh] = useState(0);
 
   useEffect(() => {
     if (typeRaw === "artist") {
@@ -166,10 +168,12 @@ export function ItemView() {
 
   const handleSaved = useCallback((r: RatingDetail) => {
     setRating(r);
+    setPlaylistRefresh((n) => n + 1);
   }, []);
 
   const handleDeleted = useCallback(() => {
     setRating(null);
+    setPlaylistRefresh((n) => n + 1);
   }, []);
 
   async function handlePlay() {
@@ -235,6 +239,13 @@ export function ItemView() {
               </Button>
             </div>
           </header>
+
+          {item.type === "track" ? (
+            <TrackPlaylists
+              spotifyId={item.spotify_id}
+              refreshKey={playlistRefresh}
+            />
+          ) : null}
 
           <section className="flex flex-col gap-6">
             <h2 className={sectionHeading}>Your rating</h2>
