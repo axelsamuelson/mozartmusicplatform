@@ -3,6 +3,18 @@ import {
   getPlaybackAccessToken,
   invalidatePlaybackAccessToken,
 } from "@/lib/spotify/clientPlaybackToken";
+import {
+  PlaybackCancelledError,
+  SpotifyPlayerError,
+  friendlyPlayerCommandMessage,
+  isNoActiveDeviceError,
+  spotifyPlayerErrorFromResponse,
+  type SpotifyPlayerCommand,
+} from "@/lib/spotify/playerCommandError";
+import {
+  requestPlaybackDeviceChoice,
+  type PlaybackDevice,
+} from "@/lib/spotify/playbackDeviceChoice";
 
 /** Spotify Web Playback SDK (subset). */
 export interface SpotifyWebPlaybackTrack {
@@ -221,8 +233,9 @@ async function withPlaybackToken(
   try {
     await fn(token);
   } catch (e) {
+    const status = e instanceof SpotifyPlayerError ? e.status : 0;
     const msg = e instanceof Error ? e.message : "";
-    if (!msg.includes("(401)")) throw e;
+    if (status !== 401 && !msg.includes("(401)")) throw e;
     invalidatePlaybackAccessToken();
     const retry = await getTokenString();
     await fn(retry);
@@ -231,11 +244,40 @@ async function withPlaybackToken(
 
 async function readSpotifyFailDetail(res: Response): Promise<string> {
   try {
-    const t = await res.text();
-    return t.slice(0, 300);
+    return await res.text();
   } catch {
     return "";
   }
+}
+
+function throwPlayerCommandError(
+  command: SpotifyPlayerCommand,
+  res: Response,
+  body: string,
+): never {
+  throw spotifyPlayerErrorFromResponse(command, res.status, body);
+}
+
+async function playerCommandRequest(
+  command: SpotifyPlayerCommand,
+  url: string,
+  init: RequestInit,
+): Promise<void> {
+  const res = await fetch(url, init);
+  if (isSpotifyPlayerCommandSuccess(res)) return;
+  const body = await readSpotifyFailDetail(res);
+  throwPlayerCommandError(command, res, body);
+}
+
+function withDeviceQuery(url: string, deviceId?: string): string {
+  if (!deviceId) return url;
+  const u = new URL(url);
+  u.searchParams.set("device_id", deviceId);
+  return u.toString();
+}
+
+function waitMs(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
 }
 
 /** True when this tab’s Web Playback SDK has an active player state (no GET /me/player). */
@@ -254,21 +296,26 @@ function isSpotifyPlayerCommandSuccess(res: Response): boolean {
   return res.ok;
 }
 
-export async function pauseViaApi(providerToken: string): Promise<void> {
-  const res = await fetch("https://api.spotify.com/v1/me/player/pause", {
-    method: "PUT",
-    headers: { Authorization: `Bearer ${providerToken}` },
-    cache: "no-store",
-  });
-  if (isSpotifyPlayerCommandSuccess(res)) return;
-  const detail = await readSpotifyFailDetail(res);
-  throw new Error(
-    detail ? `Spotify pause failed (${res.status}): ${detail}` : `Spotify pause failed (${res.status})`,
+export async function pauseViaApi(
+  providerToken: string,
+  deviceId?: string,
+): Promise<void> {
+  await playerCommandRequest(
+    "pause",
+    withDeviceQuery("https://api.spotify.com/v1/me/player/pause", deviceId),
+    {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${providerToken}` },
+      cache: "no-store",
+    },
   );
 }
 
-export async function resumeViaApi(providerToken: string): Promise<void> {
-  const res = await fetch("https://api.spotify.com/v1/me/player/play", {
+export async function resumeViaApi(
+  providerToken: string,
+  deviceId?: string,
+): Promise<void> {
+  await playerCommandRequest("play", withDeviceQuery("https://api.spotify.com/v1/me/player/play", deviceId), {
     method: "PUT",
     headers: {
       Authorization: `Bearer ${providerToken}`,
@@ -277,55 +324,51 @@ export async function resumeViaApi(providerToken: string): Promise<void> {
     body: "{}",
     cache: "no-store",
   });
-  if (isSpotifyPlayerCommandSuccess(res)) return;
-  const detail = await readSpotifyFailDetail(res);
-  throw new Error(
-    detail ? `Spotify play failed (${res.status}): ${detail}` : `Spotify play failed (${res.status})`,
+}
+
+export async function nextViaApi(
+  providerToken: string,
+  deviceId?: string,
+): Promise<void> {
+  await playerCommandRequest(
+    "next",
+    withDeviceQuery("https://api.spotify.com/v1/me/player/next", deviceId),
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${providerToken}` },
+      cache: "no-store",
+    },
   );
 }
 
-export async function nextViaApi(providerToken: string): Promise<void> {
-  const res = await fetch("https://api.spotify.com/v1/me/player/next", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${providerToken}` },
-    cache: "no-store",
-  });
-  if (isSpotifyPlayerCommandSuccess(res)) return;
-  const detail = await readSpotifyFailDetail(res);
-  throw new Error(
-    detail ? `Spotify next failed (${res.status}): ${detail}` : `Spotify next failed (${res.status})`,
+export async function previousViaApi(
+  providerToken: string,
+  deviceId?: string,
+): Promise<void> {
+  await playerCommandRequest(
+    "previous",
+    withDeviceQuery("https://api.spotify.com/v1/me/player/previous", deviceId),
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${providerToken}` },
+      cache: "no-store",
+    },
   );
 }
 
-export async function previousViaApi(providerToken: string): Promise<void> {
-  const res = await fetch("https://api.spotify.com/v1/me/player/previous", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${providerToken}` },
-    cache: "no-store",
-  });
-  if (isSpotifyPlayerCommandSuccess(res)) return;
-  const detail = await readSpotifyFailDetail(res);
-  throw new Error(
-    detail
-      ? `Spotify previous failed (${res.status}): ${detail}`
-      : `Spotify previous failed (${res.status})`,
-  );
-}
-
-export async function seekViaApi(providerToken: string, ms: number): Promise<void> {
+export async function seekViaApi(
+  providerToken: string,
+  ms: number,
+  deviceId?: string,
+): Promise<void> {
   const pos = Math.max(0, Math.floor(ms));
   const url = new URL("https://api.spotify.com/v1/me/player/seek");
   url.searchParams.set("position_ms", String(pos));
-  const res = await fetch(url.toString(), {
+  await playerCommandRequest("seek", withDeviceQuery(url.toString(), deviceId), {
     method: "PUT",
     headers: { Authorization: `Bearer ${providerToken}` },
     cache: "no-store",
   });
-  if (isSpotifyPlayerCommandSuccess(res)) return;
-  const detail = await readSpotifyFailDetail(res);
-  throw new Error(
-    detail ? `Spotify seek failed (${res.status}): ${detail}` : `Spotify seek failed (${res.status})`,
-  );
 }
 
 function friendlySdkError(
@@ -545,16 +588,45 @@ export function disconnectPlayback(): void {
   lastSdkState = null;
 }
 
-type SpotifyDevice = { id: string; is_active?: boolean };
+type SpotifyDeviceRow = {
+  id?: string | null;
+  name?: string;
+  type?: string;
+  is_active?: boolean;
+};
 
-async function fetchDevices(token: string): Promise<SpotifyDevice[]> {
+function mapPlaybackDevice(row: SpotifyDeviceRow): PlaybackDevice | null {
+  const id = typeof row.id === "string" ? row.id : "";
+  if (!id) return null;
+  return {
+    id,
+    name: typeof row.name === "string" && row.name.trim() ? row.name.trim() : "Spotify device",
+    type: typeof row.type === "string" ? row.type : "Unknown",
+    is_active: Boolean(row.is_active),
+    is_this_browser: Boolean(playbackDeviceId && id === playbackDeviceId),
+  };
+}
+
+async function fetchDevices(token: string): Promise<PlaybackDevice[]> {
   const res = await fetch("https://api.spotify.com/v1/me/player/devices", {
     headers: { Authorization: `Bearer ${token}` },
     cache: "no-store",
   });
   if (!res.ok) return [];
-  const data = (await res.json()) as { devices?: SpotifyDevice[] };
-  return data.devices ?? [];
+  const data = (await res.json()) as { devices?: SpotifyDeviceRow[] };
+  const mapped = (data.devices ?? [])
+    .map(mapPlaybackDevice)
+    .filter((d): d is PlaybackDevice => d != null);
+  if (playbackDeviceId && !mapped.some((d) => d.id === playbackDeviceId)) {
+    mapped.unshift({
+      id: playbackDeviceId,
+      name: "This browser",
+      type: "Computer",
+      is_active: false,
+      is_this_browser: true,
+    });
+  }
+  return mapped;
 }
 
 const DEVICE_VISIBILITY_MAX_ATTEMPTS = 5;
@@ -573,10 +645,13 @@ async function waitUntilDeviceVisible(
     const devices = await fetchDevices(token);
     if (devices.some((d) => d.id === deviceId)) return;
     if (attempt < DEVICE_VISIBILITY_MAX_ATTEMPTS - 1) {
-      await new Promise((r) => setTimeout(r, DEVICE_VISIBILITY_POLL_MS));
+      await waitMs(DEVICE_VISIBILITY_POLL_MS);
     }
   }
-  throw new Error(
+  throw new SpotifyPlayerError(
+    "play",
+    404,
+    "NO_ACTIVE_DEVICE",
     "This browser player is not visible to Spotify yet. Wait a few seconds and try again.",
   );
 }
@@ -585,6 +660,7 @@ async function waitUntilDeviceVisible(
 async function transferPlaybackToDevice(
   deviceId: string,
   token: string,
+  play = false,
 ): Promise<void> {
   const res = await fetch("https://api.spotify.com/v1/me/player", {
     method: "PUT",
@@ -592,16 +668,67 @@ async function transferPlaybackToDevice(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ device_ids: [deviceId], play: false }),
+    body: JSON.stringify({ device_ids: [deviceId], play }),
     cache: "no-store",
   });
   if (isSpotifyPlayerCommandSuccess(res)) return;
   if (res.status === 404) return;
   const text = await res.text().catch(() => "");
-  throw new Error(
-    text
-      ? `Transfer to this player failed (${res.status}): ${text}`
-      : `Transfer to this player failed (${res.status})`,
+  throw spotifyPlayerErrorFromResponse("transfer", res.status, text);
+}
+
+async function activateDeviceAndRetry(
+  token: string,
+  deviceId: string,
+  run: (deviceId: string) => Promise<void>,
+): Promise<void> {
+  await transferPlaybackToDevice(deviceId, token);
+  await waitMs(350);
+  await run(deviceId);
+}
+
+/**
+ * Run a player command, recovering from NO_ACTIVE_DEVICE by transferring
+ * to this browser, a single available speaker, or asking the user to pick.
+ */
+async function runPlayerCommandWithDeviceRecovery(
+  token: string,
+  command: SpotifyPlayerCommand,
+  run: (deviceId?: string) => Promise<void>,
+): Promise<void> {
+  try {
+    await run(undefined);
+    return;
+  } catch (e) {
+    if (!isNoActiveDeviceError(e)) throw e;
+  }
+
+  if (playbackDeviceId) {
+    try {
+      await activateDeviceAndRetry(token, playbackDeviceId, run);
+      return;
+    } catch (e) {
+      if (!isNoActiveDeviceError(e)) throw e;
+    }
+  }
+
+  const devices = await fetchDevices(token);
+  if (devices.length === 1) {
+    await activateDeviceAndRetry(token, devices[0]!.id, run);
+    return;
+  }
+  if (devices.length > 1) {
+    const picked = await requestPlaybackDeviceChoice(devices);
+    if (!picked) throw new PlaybackCancelledError();
+    await activateDeviceAndRetry(token, picked, run);
+    return;
+  }
+
+  throw new SpotifyPlayerError(
+    command,
+    404,
+    "NO_ACTIVE_DEVICE",
+    friendlyPlayerCommandMessage(command, 404, "NO_ACTIVE_DEVICE"),
   );
 }
 
@@ -614,7 +741,7 @@ async function startPlaybackViaWebApi(spotifyUri: string): Promise<void> {
 
   await waitUntilDeviceVisible(deviceId, token);
   await transferPlaybackToDevice(deviceId, token);
-  await new Promise((r) => setTimeout(r, 250));
+  await waitMs(250);
 
   const { kind, uri } = parseSpotifyUri(spotifyUri);
   const body =
@@ -647,27 +774,30 @@ async function startPlaybackViaWebApi(spotifyUri: string): Promise<void> {
 
   if (res.status === 204 || res.status === 200) return;
 
-  let detail = "";
-  try {
-    detail = await res.text();
-  } catch {
-    /* ignore */
-  }
+  const detail = await res.text().catch(() => "");
+  const err = spotifyPlayerErrorFromResponse("play", res.status, detail);
+  if (!err.isNoActiveDevice) throw err;
 
-  if (res.status === 404) {
-    throw new Error(
-      "Playback device not found. Open Spotify on another device, then try again, or refresh this page.",
-    );
-  }
-  if (res.status === 403) {
-    throw new Error(
-      "Spotify blocked playback (Premium or scopes required for this device).",
-    );
-  }
-
-  throw new Error(
-    detail ? `Start playback failed (${res.status}): ${detail}` : `Start playback failed (${res.status})`,
-  );
+  const devices = await fetchDevices(token);
+  if (devices.length === 0) throw err;
+  const targetId =
+    devices.length === 1
+      ? devices[0]!.id
+      : await requestPlaybackDeviceChoice(devices);
+  if (!targetId) throw new PlaybackCancelledError();
+  await transferPlaybackToDevice(targetId, token);
+  await waitMs(250);
+  const retryUrl = new URL("https://api.spotify.com/v1/me/player/play");
+  retryUrl.searchParams.set("device_id", targetId);
+  const retry = await fetch(retryUrl.toString(), {
+    method: "PUT",
+    headers: authHeaders,
+    body,
+    cache: "no-store",
+  });
+  if (retry.ok) return;
+  const retryBody = await retry.text().catch(() => "");
+  throw spotifyPlayerErrorFromResponse("play", retry.status, retryBody);
 }
 
 function parseSpotifyUri(uri: string): { kind: "track" | "context"; uri: string } {
@@ -699,7 +829,11 @@ export async function pause(): Promise<void> {
     await innerPlayer.pause();
     return;
   }
-  await withPlaybackToken((token) => pauseViaApi(token));
+  await withPlaybackToken((token) =>
+    runPlayerCommandWithDeviceRecovery(token, "pause", (deviceId) =>
+      pauseViaApi(token, deviceId),
+    ),
+  );
 }
 
 export async function resume(): Promise<void> {
@@ -708,7 +842,11 @@ export async function resume(): Promise<void> {
     await player.resume();
     return;
   }
-  await withPlaybackToken((token) => resumeViaApi(token));
+  await withPlaybackToken((token) =>
+    runPlayerCommandWithDeviceRecovery(token, "play", (deviceId) =>
+      resumeViaApi(token, deviceId),
+    ),
+  );
 }
 
 export async function next(): Promise<void> {
@@ -721,7 +859,9 @@ export async function next(): Promise<void> {
       await innerPlayer.nextTrack();
       return;
     }
-    await nextViaApi(token);
+    await runPlayerCommandWithDeviceRecovery(token, "next", (deviceId) =>
+      nextViaApi(token, deviceId),
+    );
   });
 }
 
@@ -735,7 +875,9 @@ export async function previous(): Promise<void> {
       await innerPlayer.previousTrack();
       return;
     }
-    await previousViaApi(token);
+    await runPlayerCommandWithDeviceRecovery(token, "previous", (deviceId) =>
+      previousViaApi(token, deviceId),
+    );
   });
 }
 
@@ -745,7 +887,11 @@ export async function seek(ms: number): Promise<void> {
     await player.seek(ms);
     return;
   }
-  await withPlaybackToken((token) => seekViaApi(token, ms));
+  await withPlaybackToken((token) =>
+    runPlayerCommandWithDeviceRecovery(token, "seek", (deviceId) =>
+      seekViaApi(token, ms, deviceId),
+    ),
+  );
 }
 
 export async function setVolume(level: number): Promise<void> {

@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import type { Session } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/client";
+import { PlaybackDevicePicker } from "@/components/PlaybackDevicePicker";
 
 const Player = dynamic(
   () => import("@/components/Player").then((m) => ({ default: m.Player })),
@@ -36,5 +37,10 @@ export function PlayerLoader() {
   if (pathname === "/") return null;
   if (!session?.user) return null;
 
-  return <Player />;
+  return (
+    <>
+      <PlaybackDevicePicker />
+      <Player />
+    </>
+  );
 }

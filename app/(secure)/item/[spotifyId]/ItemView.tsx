@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { loadTagsCatalog } from "@/lib/ratings/tagsCache";
 import { userFacingFetchError } from "@/lib/http/fetchRetry";
 import { play, spotifyUri } from "@/lib/spotify/player";
+import { isPlaybackCancelled } from "@/lib/spotify/playerCommandError";
 import { glassCardTight, glassPanel, pageHeading, pageSub, sectionHeading } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 import type { ItemType } from "@/lib/spotify/api";
@@ -195,6 +196,7 @@ export function ItemView() {
     try {
       await play(spotifyUri(item.type, item.spotify_id));
     } catch (e) {
+      if (isPlaybackCancelled(e)) return;
       toast.error(userFacingFetchError(e, "Could not start playback. Try again."));
     } finally {
       setPlaying(false);

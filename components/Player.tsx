@@ -41,6 +41,7 @@ import {
   stopPlaybackTokenKeepalive,
 } from "@/lib/spotify/clientPlaybackToken";
 import { toast } from "sonner";
+import { isPlaybackCancelled } from "@/lib/spotify/playerCommandError";
 import { buildClientAuditSnapshot } from "@/lib/audit/useAuditCollector";
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import { createClient } from "@/lib/supabase/client";
@@ -566,6 +567,7 @@ export function Player() {
         .catch((e: unknown) => {
           clearSkipTransition();
           void refreshAfterTransport();
+          if (isPlaybackCancelled(e)) return;
           toast.error(
             userFacingFetchError(e, "Could not control playback. Try again."),
           );

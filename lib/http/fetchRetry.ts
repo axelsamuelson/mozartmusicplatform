@@ -1,3 +1,5 @@
+import { looksLikeRawSpotifyDump } from "@/lib/spotify/playerCommandError";
+
 const TRANSIENT_STATUS = new Set([408, 425, 429, 502, 503, 504]);
 
 function isTransientNetworkError(error: unknown): boolean {
@@ -14,12 +16,18 @@ function isTransientNetworkError(error: unknown): boolean {
 }
 
 export function userFacingFetchError(error: unknown, fallback: string): string {
+  if (error instanceof Error && error.name === "PlaybackCancelledError") {
+    return fallback;
+  }
   if (isTransientNetworkError(error)) {
     return fallback;
   }
   if (error instanceof Error && error.message.trim()) {
     const msg = error.message.trim();
     if (msg.toLowerCase() === "failed to fetch") return fallback;
+    if (looksLikeRawSpotifyDump(msg)) {
+      return "No active Spotify speaker. Open the Spotify app, or play a track in this tab.";
+    }
     return msg;
   }
   return fallback;

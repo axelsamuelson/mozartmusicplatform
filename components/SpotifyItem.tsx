@@ -10,6 +10,8 @@ import { Button } from "@/components/ui/button";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import type { ItemType } from "@/lib/spotify/api";
 import { play, spotifyItemHref, spotifyUri } from "@/lib/spotify/player";
+import { userFacingFetchError } from "@/lib/http/fetchRetry";
+import { isPlaybackCancelled } from "@/lib/spotify/playerCommandError";
 import { glassCardTight } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 
@@ -51,8 +53,9 @@ export function SpotifyItem({ className, ...props }: SpotifyItemProps) {
     try {
       await play(uri);
     } catch (err) {
+      if (isPlaybackCancelled(err)) return;
       toast.error(
-        err instanceof Error ? err.message : "Could not start playback",
+        userFacingFetchError(err, "Could not start playback"),
       );
     }
   }

@@ -15,6 +15,8 @@ import { Button } from "@/components/ui/button";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import type { RatingDetail } from "@/lib/types/ratings";
 import { play, spotifyItemHref, spotifyUri } from "@/lib/spotify/player";
+import { userFacingFetchError } from "@/lib/http/fetchRetry";
+import { isPlaybackCancelled } from "@/lib/spotify/playerCommandError";
 import { liveInitials } from "@/lib/live/userDisplay";
 import { glassCardTight } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
@@ -58,8 +60,9 @@ export function RatingCard({
     try {
       await play(uri);
     } catch (err) {
+      if (isPlaybackCancelled(err)) return;
       toast.error(
-        err instanceof Error ? err.message : "Could not start playback",
+        userFacingFetchError(err, "Could not start playback"),
       );
     }
   }

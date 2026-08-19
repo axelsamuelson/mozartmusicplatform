@@ -16,6 +16,7 @@ import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { userFacingFetchError } from "@/lib/http/fetchRetry";
 import type { ArtistAlbumRow, ArtistTopTrack } from "@/lib/spotify/api";
 import { play, spotifyItemHref, spotifyUri } from "@/lib/spotify/player";
+import { isPlaybackCancelled } from "@/lib/spotify/playerCommandError";
 import type { RatingDetail } from "@/lib/types/ratings";
 import { cn } from "@/lib/utils";
 import {
@@ -92,6 +93,7 @@ export function ArtistView() {
     try {
       await play(spotifyUri("artist", data.artist.spotify_id));
     } catch (e) {
+      if (isPlaybackCancelled(e)) return;
       toast.error(userFacingFetchError(e, "Could not start playback. Try again."));
     } finally {
       setPlaying(false);

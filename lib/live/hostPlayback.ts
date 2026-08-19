@@ -1,3 +1,5 @@
+import { spotifyPlayerErrorFromResponse } from "@/lib/spotify/playerCommandError";
+
 /** Server-side Spotify playback control for Jams host. */
 
 export class HostPlaybackError extends Error {
@@ -33,8 +35,11 @@ export async function playTrackOnHostDevice(
   if (res.status === 204 || res.ok) return;
 
   const detail = await res.text().catch(() => "");
+  const err = spotifyPlayerErrorFromResponse("play", res.status, detail);
   throw new HostPlaybackError(
     res.status,
-    `Spotify play failed (${res.status})${detail ? `: ${detail.slice(0, 200)}` : ""}`,
+    err.reason === "NO_ACTIVE_DEVICE"
+      ? "The host has no active Spotify speaker. Open Spotify on the host device, then try again."
+      : err.message,
   );
 }
