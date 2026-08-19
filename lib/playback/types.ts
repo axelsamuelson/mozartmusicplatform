@@ -4,6 +4,8 @@ export type PlaybackState = {
   trackId: string | null;
   trackName: string | null;
   artistName: string | null;
+  /** Primary Spotify artist id when known. */
+  artistId: string | null;
   imageUrl: string | null;
   durationMs: number;
   /** Last authoritative progress position (ms). */
@@ -27,6 +29,7 @@ export type PlaybackApiPayload = {
   trackId?: string;
   trackName?: string;
   artistName?: string;
+  artistId?: string | null;
   imageUrl?: string;
   progressMs?: number;
   durationMs?: number;

@@ -9,22 +9,36 @@ import { toast } from "sonner";
 import { NowPlayingRatingDialog } from "@/components/NowPlayingRatingDialog";
 import { TempoIntensityPills } from "@/components/TempoIntensityPills";
 
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import type { RatingDetail } from "@/lib/types/ratings";
 import { play, spotifyItemHref, spotifyUri } from "@/lib/spotify/player";
+import { liveInitials } from "@/lib/live/userDisplay";
 import { glassCardTight } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
+
+export type RatingCardRater = {
+  name: string;
+  avatarUrl: string | null;
+};
 
 export interface RatingCardProps {
   rating: RatingDetail;
   className?: string;
+  /** Small avatar on the cover — who rated this item. */
+  rater?: RatingCardRater | null;
   /** When the user saves or deletes from the “Complete rating” dialog, sync parent state. */
   onRatingUpdated?: (rating: RatingDetail | null) => void;
 }
 
-export function RatingCard({ rating, className, onRatingUpdated }: RatingCardProps) {
+export function RatingCard({
+  rating,
+  className,
+  rater,
+  onRatingUpdated,
+}: RatingCardProps) {
   const item = rating.item;
   const title = item?.name ?? "Unknown item";
   const artist = item?.artist_name ?? null;
@@ -69,21 +83,37 @@ export function RatingCard({ rating, className, onRatingUpdated }: RatingCardPro
         href={href}
         className="flex min-w-0 flex-1 gap-2 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-white/40 md:gap-3"
       >
-        <div className="relative size-12 shrink-0 overflow-hidden rounded-lg border border-white/10 bg-white/10 md:size-16">
-          {imageUrl ? (
-            <Image
-              src={imageUrl}
-              alt=""
-              width={64}
-              height={64}
-              sizes="(max-width: 768px) 48px, 64px"
-              className="size-12 object-cover md:size-16"
-            />
-          ) : (
-            <div className="flex size-12 items-center justify-center text-white/40 md:size-16">
-              <Disc3 className="size-6 md:size-8" aria-hidden />
-            </div>
-          )}
+        <div className="relative size-12 shrink-0 md:size-16">
+          <div className="size-full overflow-hidden rounded-lg border border-white/10 bg-white/10">
+            {imageUrl ? (
+              <Image
+                src={imageUrl}
+                alt=""
+                width={64}
+                height={64}
+                sizes="(max-width: 768px) 48px, 64px"
+                className="size-full object-cover"
+              />
+            ) : (
+              <div className="flex size-full items-center justify-center text-white/40">
+                <Disc3 className="size-6 md:size-8" aria-hidden />
+              </div>
+            )}
+          </div>
+          {rater ? (
+            <Avatar
+              size="sm"
+              className="absolute -right-1 -bottom-1 size-5 ring-2 ring-[#0b0b12] md:size-6"
+              title={rater.name}
+            >
+              {rater.avatarUrl ? (
+                <AvatarImage src={rater.avatarUrl} alt="" />
+              ) : null}
+              <AvatarFallback className="bg-white/15 text-[9px] text-white md:text-[10px]">
+                {liveInitials(rater.name)}
+              </AvatarFallback>
+            </Avatar>
+          ) : null}
         </div>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 md:gap-2">
           <div>

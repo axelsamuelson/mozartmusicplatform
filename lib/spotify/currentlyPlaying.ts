@@ -25,6 +25,8 @@ export type SpotifyCurrentPlayback = {
   itemKind: "track" | "episode";
   trackName: string;
   artistName: string;
+  /** Primary credited artist Spotify id. */
+  artistId: string | null;
   albumName: string;
   imageUrl: string;
   progressMs: number;
@@ -87,12 +89,15 @@ function parseTrackLikeItem(item: Record<string, unknown>): Omit<
   const id = typeof item.id === "string" ? item.id : "";
   const name = typeof item.name === "string" ? item.name : "Unknown";
 
-  const artists = Array.isArray(item.artists)
-    ? (item.artists as { name?: string }[])
-        .map((a) => (typeof a?.name === "string" ? a.name : ""))
-        .filter(Boolean)
-        .join(", ")
-    : "";
+  const artistList = Array.isArray(item.artists)
+    ? (item.artists as { name?: string; id?: string }[])
+    : [];
+  const artistName = artistList
+    .map((a) => (typeof a?.name === "string" ? a.name : ""))
+    .filter(Boolean)
+    .join(", ");
+  const firstId = artistList[0]?.id;
+  const artistId = typeof firstId === "string" && firstId.length > 0 ? firstId : null;
 
   const album = item.album && typeof item.album === "object" ? (item.album as Record<string, unknown>) : null;
   const albumName =
@@ -110,7 +115,8 @@ function parseTrackLikeItem(item: Record<string, unknown>): Omit<
   return {
     trackId: id,
     trackName: name,
-    artistName: artists || "—",
+    artistName: artistName || "—",
+    artistId,
     albumName: albumName || "—",
     imageUrl: pickImage(images),
     progressMs: 0,
@@ -149,6 +155,7 @@ function parseEpisodeItem(item: Record<string, unknown>): Omit<
     trackId: id,
     trackName: name,
     artistName: showName,
+    artistId: null,
     albumName: publisher || "—",
     imageUrl: pickImage(epImages) || pickImage(showImages),
     progressMs: 0,

@@ -2,12 +2,19 @@ import type { SpotifyCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
 import type { SpotifyWebPlaybackState, SpotifyWebPlaybackTrack } from "@/lib/spotify/player";
 import type { PlaybackApiPayload, PlaybackState } from "@/lib/playback/types";
 
+function artistIdFromUri(uri: string | undefined): string | null {
+  if (!uri || !uri.startsWith("spotify:artist:")) return null;
+  const id = uri.slice("spotify:artist:".length).trim();
+  return id.length > 0 ? id : null;
+}
+
 export function emptyPlayback(): PlaybackState {
   return {
     source: "none",
     trackId: null,
     trackName: null,
     artistName: null,
+    artistId: null,
     imageUrl: null,
     durationMs: 0,
     progressMsAtSync: 0,
@@ -35,6 +42,7 @@ export function sdkStateToPlayback(state: SpotifyWebPlaybackState): PlaybackStat
     trackId: track.id,
     trackName: track.name,
     artistName: track.artists?.map((a) => a.name).join(", ") ?? "",
+    artistId: artistIdFromUri(track.artists?.[0]?.uri),
     imageUrl: track.album?.images?.[0]?.url ?? null,
     durationMs,
     progressMsAtSync: state.position,
@@ -58,6 +66,7 @@ export function playbackFromSdkTrack(
     trackId: track.id,
     trackName: track.name,
     artistName: track.artists?.map((a) => a.name).join(", ") ?? "",
+    artistId: artistIdFromUri(track.artists?.[0]?.uri) ?? base.artistId,
     imageUrl: track.album?.images?.[0]?.url ?? null,
     durationMs:
       typeof track.duration_ms === "number" && track.duration_ms > 0
@@ -94,6 +103,7 @@ export function apiPayloadToPlayback(
     trackId: data.trackId,
     trackName: data.trackName ?? null,
     artistName: data.artistName ?? null,
+    artistId: data.artistId ?? null,
     imageUrl: data.imageUrl ?? null,
     durationMs: data.durationMs ?? 0,
     progressMsAtSync: progressMs,

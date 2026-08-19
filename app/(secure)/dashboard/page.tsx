@@ -3,9 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { RatingCard } from "@/components/RatingCard";
+import { RatingCard, type RatingCardRater } from "@/components/RatingCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { liveAvatarUrl, liveDisplayName } from "@/lib/live/userDisplay";
+import { createClient } from "@/lib/supabase/client";
 import { WAM_RATINGS_MUTATED } from "@/lib/wamRatingEvents";
 import { glassCardTight, glassSurface, pageHeading, pageSub, sectionHeading } from "@/lib/wamUi";
 import type { DashboardStats, RatingDetail } from "@/lib/types/ratings";
@@ -15,6 +17,19 @@ export default function DashboardPage() {
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [rater, setRater] = useState<RatingCardRater | null>(null);
+
+  useEffect(() => {
+    const supabase = createClient();
+    void supabase.auth.getUser().then(({ data }) => {
+      const user = data.user;
+      if (!user) return;
+      setRater({
+        name: liveDisplayName(user),
+        avatarUrl: liveAvatarUrl(user),
+      });
+    });
+  }, []);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -153,6 +168,7 @@ export default function DashboardPage() {
               <li key={r.id}>
                 <RatingCard
                   rating={r}
+                  rater={rater}
                   onRatingUpdated={(updated) =>
                     setRatings((prev) =>
                       updated

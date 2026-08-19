@@ -36,6 +36,22 @@ const SKIP_STALE_MS = 2_000;
 /** Cap React re-renders from progress interpolation (~4 fps). */
 const DISPLAY_PROGRESS_MIN_INTERVAL_MS = 250;
 
+function mergePlaybackMeta(
+  prev: PlaybackState | null,
+  next: PlaybackState,
+): PlaybackState {
+  if (!prev) return next;
+  const sameTrack = Boolean(prev.trackId && prev.trackId === next.trackId);
+  const sameContext = Boolean(prev.contextUri && prev.contextUri === next.contextUri);
+  return {
+    ...next,
+    artistId: next.artistId ?? (sameTrack ? prev.artistId : null),
+    contextName: next.contextName ?? (sameContext ? prev.contextName : undefined),
+    isWamPlaylist: next.isWamPlaylist ?? (sameContext ? prev.isWamPlaylist : undefined),
+    wamPlaylistId: next.wamPlaylistId ?? (sameContext ? prev.wamPlaylistId : undefined),
+  };
+}
+
 function isSdkPrimary(state: PlaybackState | null): boolean {
   return state?.source === "sdk" && Boolean(state.trackId);
 }
@@ -143,11 +159,12 @@ export function useUnifiedPlayback(options: {
         prevTrackIdRef.current = next.trackId;
         notifyTrackChanged();
       }
-      playbackRef.current = next;
-      setPlayback(next);
-      setDisplayProgressMs(getCurrentProgressMs(next));
+      playbackRef.current = mergePlaybackMeta(prev, next);
+      const merged = playbackRef.current;
+      setPlayback(merged);
+      setDisplayProgressMs(getCurrentProgressMs(merged));
       if (opts?.broadcast !== false) {
-        broadcastPlayback(next);
+        broadcastPlayback(merged);
       }
     },
     [clearSkipTransition, notifyTrackChanged],

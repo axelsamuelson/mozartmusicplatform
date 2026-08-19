@@ -46,6 +46,10 @@ import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import { createClient } from "@/lib/supabase/client";
 import { emptyPlayback, sdkStateToPlayback } from "@/lib/playback/mappers";
 import { playlistIdFromContextUri } from "@/lib/spotify/currentlyPlaying";
+import {
+  spotifyPlaylistRankHref,
+  wamPlaylistRankHref,
+} from "@/lib/playlist/urls";
 import { useUnifiedPlayback } from "@/lib/playback/useUnifiedPlayback";
 import type { PlaybackState } from "@/lib/playback/types";
 import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
@@ -62,6 +66,7 @@ import {
   resume,
   seek,
   setVolume,
+  spotifyItemHref,
   unregisterPlaybackTokenProvider,
 } from "@/lib/spotify/player";
 import { cn } from "@/lib/utils";
@@ -92,8 +97,8 @@ function PlaylistContextLine({
     isWam ? "text-wam hover:text-wam" : "text-wam/70 hover:text-wam",
     className,
   );
-  const content = (
-    <>
+  return (
+    <Link href={href} className={linkClass}>
       <Icon
         className={cn("size-3.5 shrink-0", isWam ? "text-wam" : "text-wam/80")}
         aria-hidden
@@ -101,28 +106,8 @@ function PlaylistContextLine({
       <span className="truncate underline-offset-2 group-hover/playlist:underline">
         {name}
       </span>
-    </>
+    </Link>
   );
-
-  if (isWam && href.startsWith("/")) {
-    return (
-      <Link href={href} className={linkClass}>
-        {content}
-      </Link>
-    );
-  }
-
-  return (
-    <a href={href} target="_blank" rel="noopener noreferrer" className={linkClass}>
-      {content}
-    </a>
-  );
-}
-
-const PLAYER_DEBUG = process.env.NODE_ENV === "development";
-
-function playerLog(...args: unknown[]): void {
-  if (PLAYER_DEBUG) console.log("[Player]", ...args);
 }
 
 function playlistContextFromPlayback(playback: PlaybackState | null) {
@@ -135,9 +120,15 @@ function playlistContextFromPlayback(playback: PlaybackState | null) {
   const isWam = Boolean(playback.isWamPlaylist);
   const href =
     isWam && playback.wamPlaylistId
-      ? `/playlists/${playback.wamPlaylistId}`
-      : `https://open.spotify.com/playlist/${spotifyId}`;
+      ? wamPlaylistRankHref(playback.wamPlaylistId)
+      : spotifyPlaylistRankHref(spotifyId);
   return { name, href, isWam };
+}
+
+const PLAYER_DEBUG = process.env.NODE_ENV === "development";
+
+function playerLog(...args: unknown[]): void {
+  if (PLAYER_DEBUG) console.log("[Player]", ...args);
 }
 
 export function Player() {
@@ -624,6 +615,14 @@ export function Player() {
   const artUrl = playback?.imageUrl ?? null;
   const trackTitle = playback?.trackName ?? "Nothing playing";
   const artistLine = playback?.artistName ?? "—";
+  const trackHref =
+    hasAnyTrack && nowPlayingIsRateableTrack && nowTrackId
+      ? spotifyItemHref("track", nowTrackId)
+      : null;
+  const artistHref =
+    hasAnyTrack && playback?.artistId
+      ? spotifyItemHref("artist", playback.artistId)
+      : null;
   const deviceLine = fromSdk
     ? "Playing in this browser"
     : playback?.deviceName
@@ -714,10 +713,30 @@ export function Player() {
             )}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center gap-0.5">
-            <p className="truncate text-sm font-medium text-white">
-              {hasAnyTrack ? trackTitle : "Nothing playing"}
-            </p>
-            <p className="truncate text-xs text-white/50">{hasAnyTrack ? artistLine : "—"}</p>
+            {trackHref ? (
+              <Link
+                href={trackHref}
+                className="truncate text-sm font-medium text-white hover:underline"
+              >
+                {trackTitle}
+              </Link>
+            ) : (
+              <p className="truncate text-sm font-medium text-white">
+                {hasAnyTrack ? trackTitle : "Nothing playing"}
+              </p>
+            )}
+            {artistHref ? (
+              <Link
+                href={artistHref}
+                className="truncate text-xs text-white/50 hover:text-white hover:underline"
+              >
+                {artistLine}
+              </Link>
+            ) : (
+              <p className="truncate text-xs text-white/50">
+                {hasAnyTrack ? artistLine : "—"}
+              </p>
+            )}
             {playlistContext ? (
               <PlaylistContextLine
                 name={playlistContext.name}
@@ -827,12 +846,30 @@ export function Player() {
             )}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center gap-0.5 pt-0.5 md:pt-0">
-            <p className="line-clamp-2 text-[13px] font-medium leading-snug text-white md:truncate md:text-sm">
-              {hasAnyTrack ? trackTitle : "Nothing playing"}
-            </p>
-            <p className="truncate text-[11px] text-white/50 md:text-xs">
-              {hasAnyTrack ? artistLine : "—"}
-            </p>
+            {trackHref ? (
+              <Link
+                href={trackHref}
+                className="line-clamp-2 text-[13px] font-medium leading-snug text-white hover:underline md:truncate md:text-sm"
+              >
+                {trackTitle}
+              </Link>
+            ) : (
+              <p className="line-clamp-2 text-[13px] font-medium leading-snug text-white md:truncate md:text-sm">
+                {hasAnyTrack ? trackTitle : "Nothing playing"}
+              </p>
+            )}
+            {artistHref ? (
+              <Link
+                href={artistHref}
+                className="truncate text-[11px] text-white/50 hover:text-white hover:underline md:text-xs"
+              >
+                {artistLine}
+              </Link>
+            ) : (
+              <p className="truncate text-[11px] text-white/50 md:text-xs">
+                {hasAnyTrack ? artistLine : "—"}
+              </p>
+            )}
             {playlistContext ? (
               <PlaylistContextLine
                 name={playlistContext.name}

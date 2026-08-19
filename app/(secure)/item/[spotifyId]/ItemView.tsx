@@ -185,7 +185,9 @@ export function ItemView() {
         className="w-fit rounded-full px-0 text-white/70 hover:bg-white/10 hover:text-white"
         asChild
       >
-        <Link href="/search">← Back to search</Link>
+        <Link href={type === "track" ? "/profile/tracks" : "/search"}>
+          {type === "track" ? "← Back to tracks" : "← Back to search"}
+        </Link>
       </Button>
 
       {itemLoading ? (
