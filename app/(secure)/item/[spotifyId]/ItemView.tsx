@@ -9,6 +9,7 @@ import { toast } from "sonner";
 
 import { LoadingMark } from "@/components/LoadingMark";
 import { RatingForm } from "@/components/RatingForm";
+import { ScoreHistory } from "@/components/ScoreHistory";
 import { RankLabel, TrackPlaylists } from "@/components/TrackPlaylists";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { Badge } from "@/components/ui/badge";
@@ -20,6 +21,7 @@ import { play, spotifyUri } from "@/lib/spotify/player";
 import { glassCardTight, glassPanel, pageHeading, pageSub, sectionHeading } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 import type { ItemType } from "@/lib/spotify/api";
+import type { ScoreHistoryEntry } from "@/lib/ratings/scoreHistory";
 import type {
   GenreTagRow,
   MomentTagRow,
@@ -71,6 +73,7 @@ export function ItemView() {
 
   const [rating, setRating] = useState<RatingDetail | null>(null);
   const [ratingLoading, setRatingLoading] = useState(false);
+  const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>([]);
   const [playing, setPlaying] = useState(false);
   const [playlistRefresh, setPlaylistRefresh] = useState(0);
   const [platformRank, setPlatformRank] = useState<TrackRank | null>(null);
@@ -95,6 +98,7 @@ export function ItemView() {
     setItemError(null);
     setItem(null);
     setPlatformRank(null);
+    setScoreHistory([]);
 
     fetch(
       `/api/spotify/item/${encodeURIComponent(spotifyId)}?type=${encodeURIComponent(type)}`,
@@ -141,13 +145,16 @@ export function ItemView() {
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;
           rating?: RatingDetail | null;
+          score_history?: ScoreHistoryEntry[];
         };
         if (!res.ok) throw new Error(body.error || "Failed to load rating");
         setRating(body.rating ?? null);
+        setScoreHistory(body.score_history ?? []);
       })
       .catch((e: unknown) => {
         if (e instanceof Error && e.name === "AbortError") return;
         setRating(null);
+        setScoreHistory([]);
       })
       .finally(() => {
         if (!ac.signal.aborted) setRatingLoading(false);
@@ -156,13 +163,29 @@ export function ItemView() {
     return () => ac.abort();
   }, [spotifyId, type, typeRaw]);
 
-  const handleSaved = useCallback((r: RatingDetail) => {
-    setRating(r);
-    setPlaylistRefresh((n) => n + 1);
-  }, []);
+  const handleSaved = useCallback(
+    (r: RatingDetail, history?: ScoreHistoryEntry[]) => {
+      setRating(r);
+      setPlaylistRefresh((n) => n + 1);
+      if (history) {
+        setScoreHistory(history);
+        return;
+      }
+      void fetch(`/api/ratings?spotify_id=${encodeURIComponent(r.spotify_id)}`)
+        .then(async (res) => {
+          const body = (await res.json().catch(() => ({}))) as {
+            score_history?: ScoreHistoryEntry[];
+          };
+          if (res.ok) setScoreHistory(body.score_history ?? []);
+        })
+        .catch(() => {});
+    },
+    [],
+  );
 
   const handleDeleted = useCallback(() => {
     setRating(null);
+    setScoreHistory([]);
     setPlaylistRefresh((n) => n + 1);
   }, []);
 
@@ -284,6 +307,10 @@ export function ItemView() {
               />
             )}
           </section>
+
+          {item.type === "track" ? (
+            <ScoreHistory entries={scoreHistory} />
+          ) : null}
         </>
       ) : null}
     </div>

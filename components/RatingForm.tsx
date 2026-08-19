@@ -11,6 +11,7 @@ import type {
   MomentTagRow,
   RatingDetail,
 } from "@/lib/types/ratings";
+import type { ScoreHistoryEntry } from "@/lib/ratings/scoreHistory";
 import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
 import { dispatchRatingsMutated } from "@/lib/wamRatingEvents";
 import { glassPanel, sectionHeading } from "@/lib/wamUi";
@@ -21,7 +22,7 @@ export interface RatingFormProps {
   genreTags: GenreTagRow[];
   momentTags: MomentTagRow[];
   initialRating: RatingDetail | null;
-  onSaved: (rating: RatingDetail) => void;
+  onSaved: (rating: RatingDetail, scoreHistory?: ScoreHistoryEntry[]) => void;
   onDeleted?: () => void;
   className?: string;
   presentation?: "page" | "dialog";
@@ -89,13 +90,14 @@ export function RatingForm({
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
         rating?: RatingDetail;
+        score_history?: ScoreHistoryEntry[];
       };
       if (!res.ok) {
         toast.error(body.error || "Could not save rating");
         return;
       }
       if (body.rating) {
-        onSaved(body.rating);
+        onSaved(body.rating, body.score_history);
         dispatchRatingsMutated();
         toast.success("Rating saved");
       }

@@ -10,6 +10,7 @@ import {
   normalizeRating,
   RATING_SELECT,
 } from "@/lib/ratings/normalize";
+import { loadScoreHistory } from "@/lib/ratings/scoreHistory";
 import type { DashboardStats } from "@/lib/types/ratings";
 
 function statsFromScoreRows(
@@ -80,8 +81,11 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
+    const score_history = await loadScoreHistory(supabase, user.id, spotifyId);
+
     return NextResponse.json({
       rating: data ? normalizeRating(data as Record<string, unknown>) : null,
+      score_history,
     });
   }
 
@@ -340,5 +344,6 @@ export async function POST(request: NextRequest) {
     });
   });
 
-  return NextResponse.json({ rating: full });
+  const score_history = await loadScoreHistory(supabase, user.id, spotify_id);
+  return NextResponse.json({ rating: full, score_history });
 }
