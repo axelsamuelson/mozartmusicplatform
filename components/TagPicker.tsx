@@ -9,6 +9,11 @@ import {
   sortMomentTagsWithSuggestions,
 } from "@/lib/ratings/tagSuggestions";
 import { sortGenreTagsByPopularity } from "@/lib/ratings/topGenres";
+import {
+  invalidateTopGenreIdsCache,
+  loadTopGenreIdsCached,
+  peekTopGenreIds,
+} from "@/lib/ratings/topGenresCache";
 import { WAM_RATINGS_MUTATED } from "@/lib/wamRatingEvents";
 import type {
   GenreTagRow,
@@ -113,31 +118,28 @@ export function TagPicker({
   showTempoIntensity = true,
 }: TagPickerProps) {
   const isDialog = visualVariant === "dialog";
-  const [topGenreIds, setTopGenreIds] = useState<number[]>([]);
+  const [topGenreIds, setTopGenreIds] = useState<number[]>(
+    () => peekTopGenreIds() ?? [],
+  );
 
   useEffect(() => {
     let cancelled = false;
 
     function loadTopGenres() {
-      void fetch("/api/tags/top-genres", { cache: "no-store" })
-        .then(async (res) => {
-          const body = (await res.json().catch(() => ({}))) as {
-            top_genre_ids?: number[];
-          };
-          if (!res.ok || cancelled) return;
-          const ids = (body.top_genre_ids ?? []).filter(
-            (id): id is number => Number.isInteger(id),
-          );
-          setTopGenreIds(ids);
-        })
-        .catch(() => {});
+      void loadTopGenreIdsCached().then((ids) => {
+        if (!cancelled) setTopGenreIds(ids);
+      });
     }
 
     loadTopGenres();
-    window.addEventListener(WAM_RATINGS_MUTATED, loadTopGenres);
+    function onMutated() {
+      invalidateTopGenreIdsCache();
+      loadTopGenres();
+    }
+    window.addEventListener(WAM_RATINGS_MUTATED, onMutated);
     return () => {
       cancelled = true;
-      window.removeEventListener(WAM_RATINGS_MUTATED, loadTopGenres);
+      window.removeEventListener(WAM_RATINGS_MUTATED, onMutated);
     };
   }, []);
 

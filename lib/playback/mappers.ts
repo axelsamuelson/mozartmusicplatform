@@ -82,14 +82,17 @@ export function apiPayloadToPlayback(
   data: PlaybackApiPayload,
   clientReceivedAt: number,
 ): PlaybackState {
-  if (
-    !data.isPlaying ||
-    typeof data.trackId !== "string" ||
-    !data.trackId.length
-  ) {
+  const trackId =
+    typeof data.trackId === "string" && data.trackId.length > 0
+      ? data.trackId
+      : null;
+
+  // No active item at all (Spotify 204 / nothing on device).
+  if (!trackId) {
     return {
       ...emptyPlayback(),
       syncedAt: clientReceivedAt,
+      deviceName: data.deviceName ?? null,
     };
   }
 
@@ -100,7 +103,7 @@ export function apiPayloadToPlayback(
 
   return {
     source: "api",
-    trackId: data.trackId,
+    trackId,
     trackName: data.trackName ?? null,
     artistName: data.artistName ?? null,
     artistId: data.artistId ?? null,
@@ -108,6 +111,7 @@ export function apiPayloadToPlayback(
     durationMs: data.durationMs ?? 0,
     progressMsAtSync: progressMs,
     syncedAt: clientReceivedAt,
+    // Keep metadata when paused — clearing felt like the player "broke".
     isPlaying: Boolean(data.isPlaying),
     deviceName: data.deviceName ?? null,
     contextType: data.contextType ?? null,
@@ -122,9 +126,5 @@ export function apiPayloadToPlayback(
 export function isApiPayloadWithTrack(
   data: PlaybackApiPayload,
 ): data is PlaybackApiPayload & SpotifyCurrentPlayback {
-  return (
-    data.isPlaying &&
-    typeof data.trackId === "string" &&
-    data.trackId.length > 0
-  );
+  return typeof data.trackId === "string" && data.trackId.length > 0;
 }

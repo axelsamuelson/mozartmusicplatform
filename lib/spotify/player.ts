@@ -280,17 +280,6 @@ function waitMs(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-/** True when this tab’s Web Playback SDK has an active player state (no GET /me/player). */
-async function isWamSdkActiveOnDevice(): Promise<boolean> {
-  if (!innerPlayer || !playbackDeviceId) return false;
-  try {
-    const state = await innerPlayer.getCurrentState();
-    return state !== null;
-  } catch {
-    return false;
-  }
-}
-
 /** Spotify docs often say 204; some responses use 200 with an empty or non-JSON body. */
 function isSpotifyPlayerCommandSuccess(res: Response): boolean {
   return res.ok;
@@ -825,7 +814,7 @@ export function peekSdkQueuedTrack(
 }
 
 export async function pause(): Promise<void> {
-  if (innerPlayer && lastSdkState) {
+  if (innerPlayer) {
     await innerPlayer.pause();
     return;
   }
@@ -837,7 +826,7 @@ export async function pause(): Promise<void> {
 }
 
 export async function resume(): Promise<void> {
-  if (innerPlayer && lastSdkState) {
+  if (innerPlayer) {
     const player = await ensurePlayer();
     await player.resume();
     return;
@@ -850,39 +839,31 @@ export async function resume(): Promise<void> {
 }
 
 export async function next(): Promise<void> {
-  if (innerPlayer && lastSdkState) {
+  if (innerPlayer) {
     await innerPlayer.nextTrack();
     return;
   }
-  await withPlaybackToken(async (token) => {
-    if (innerPlayer && (await isWamSdkActiveOnDevice())) {
-      await innerPlayer.nextTrack();
-      return;
-    }
-    await runPlayerCommandWithDeviceRecovery(token, "next", (deviceId) =>
+  await withPlaybackToken((token) =>
+    runPlayerCommandWithDeviceRecovery(token, "next", (deviceId) =>
       nextViaApi(token, deviceId),
-    );
-  });
+    ),
+  );
 }
 
 export async function previous(): Promise<void> {
-  if (innerPlayer && lastSdkState) {
+  if (innerPlayer) {
     await innerPlayer.previousTrack();
     return;
   }
-  await withPlaybackToken(async (token) => {
-    if (innerPlayer && (await isWamSdkActiveOnDevice())) {
-      await innerPlayer.previousTrack();
-      return;
-    }
-    await runPlayerCommandWithDeviceRecovery(token, "previous", (deviceId) =>
+  await withPlaybackToken((token) =>
+    runPlayerCommandWithDeviceRecovery(token, "previous", (deviceId) =>
       previousViaApi(token, deviceId),
-    );
-  });
+    ),
+  );
 }
 
 export async function seek(ms: number): Promise<void> {
-  if (innerPlayer && lastSdkState) {
+  if (innerPlayer) {
     const player = await ensurePlayer();
     await player.seek(ms);
     return;

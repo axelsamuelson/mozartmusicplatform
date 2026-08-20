@@ -341,8 +341,12 @@ export async function fetchCurrentPlayback(
   options?: FetchCurrentPlaybackOptions,
 ): Promise<SpotifyCurrentPlayback | null> {
   const userId = options?.userId?.trim();
+  // Fresh transport polls must hit Spotify immediately — skip mem/DB cache and user throttle.
   if (!userId || options?.bypassCache) {
-    return fetchCurrentPlaybackFromApi(accessToken, userId);
+    return fetchCurrentPlaybackFromApi(
+      accessToken,
+      options?.bypassCache ? undefined : userId,
+    );
   }
 
   const mem = memPlaybackByUser.get(userId);

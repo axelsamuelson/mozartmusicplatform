@@ -30,7 +30,8 @@ const IDLE_API_MS = 60_000;
 const ACTIVE_POLL_CAP_MS = 3_000;
 /** Early polls to detect external-device track changes. */
 const EARLY_SKIP_MS = [2_000, 6_000, 15_000] as const;
-const TRANSPORT_POLL_DELAYS_MS = [120, 400, 1_000] as const;
+/** Fewer, spaced polls — avoid stampeding Spotify after skip on external devices. */
+const TRANSPORT_POLL_DELAYS_MS = [600, 2_000] as const;
 /** Ignore stale SDK/API echoes of a track we just skipped, for this long. */
 const SKIP_STALE_MS = 2_000;
 /** Cap React re-renders from progress interpolation (~4 fps). */
@@ -102,6 +103,8 @@ export function useUnifiedPlayback(options: {
   const skipIgnoreIdsRef = useRef<Set<string>>(new Set());
   const skipIgnoreUntilRef = useRef(0);
   const pendingSkipCountRef = useRef(0);
+  const forceFetchGenRef = useRef(0);
+  const forceFetchAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     playbackRef.current = playback;
@@ -180,20 +183,13 @@ export function useUnifiedPlayback(options: {
       skipIgnoreUntilRef.current = Date.now() + SKIP_STALE_MS;
       const index = pendingSkipCountRef.current;
       pendingSkipCountRef.current += 1;
+
+      // Only paint the next track when we actually know it (SDK queue).
+      // On iPhone/API we keep showing the current track until a verified new id arrives —
+      // faking a progress reset on the same song feels broken.
       const queued = peekSdkQueuedTrack(direction, index);
       if (queued && current) {
         applyPlayback(playbackFromSdkTrack(queued, { ...current, isPlaying: true }));
-        return;
-      }
-      if (current) {
-        applyPlayback({
-          ...current,
-          progressMsAtSync: 0,
-          syncedAt: Date.now(),
-        });
-      }
-      if (current?.source === "api") {
-        void fetchApiPlaybackRef.current(true);
       }
     },
     [applyPlayback],
@@ -289,11 +285,25 @@ export function useUnifiedPlayback(options: {
       return;
     }
 
+    let ac: AbortController | null = null;
+    let gen = 0;
+    if (force) {
+      forceFetchAbortRef.current?.abort();
+      ac = new AbortController();
+      forceFetchAbortRef.current = ac;
+      gen = ++forceFetchGenRef.current;
+    }
+
     try {
       const url = force
         ? "/api/spotify/playback?fresh=1"
         : "/api/spotify/playback";
-      const res = await fetch(url, { cache: "no-store" });
+      const res = await fetch(url, {
+        cache: "no-store",
+        signal: ac?.signal,
+      });
+      if (force && gen !== forceFetchGenRef.current) return;
+
       const circuit = res.headers.get("X-WAM-Circuit");
       setLastPlaybackCircuitHeader(circuit);
       if (circuit === "open") {
@@ -301,6 +311,7 @@ export function useUnifiedPlayback(options: {
       }
       const json = (await res.json()) as PlaybackApiPayload;
       if (!res.ok || typeof json.error === "string") return;
+      if (force && gen !== forceFetchGenRef.current) return;
 
       const clientReceivedAt = Date.now();
       const next = apiPayloadToPlayback(json, clientReceivedAt);
@@ -318,7 +329,8 @@ export function useUnifiedPlayback(options: {
         scheduleApiFetch(next);
         scheduleEarlySkipChecks(next);
       }
-    } catch {
+    } catch (e) {
+      if (e instanceof Error && e.name === "AbortError") return;
       /* ignore */
     }
   }, [
@@ -334,9 +346,20 @@ export function useUnifiedPlayback(options: {
 
   const scheduleTransportPolls = useCallback(() => {
     clearTransportPollTimers();
-    void fetchApiPlaybackRef.current(true);
+    // Browser SDK already pushes player_state_changed — extra API polls fight cache.
+    if (isSdkPrimary(playbackRef.current)) return;
+    // refreshAfterTransport does the immediate fresh fetch; these are lag catch-ups only.
     for (const delay of TRANSPORT_POLL_DELAYS_MS) {
       const id = setTimeout(() => {
+        const current = playbackRef.current;
+        const ignoring = skipIgnoreUntilRef.current > Date.now();
+        if (
+          !ignoring &&
+          current?.trackId &&
+          !skipIgnoreIdsRef.current.has(current.trackId)
+        ) {
+          return;
+        }
         void fetchApiPlaybackRef.current(true);
       }, delay);
       transportPollTimersRef.current.push(id);

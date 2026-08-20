@@ -240,11 +240,22 @@ export async function POST(request: NextRequest) {
   const comment =
     typeof body.comment === "string" ? body.comment : body.comment ?? null;
 
-  const { data: cached, error: cacheErr } = await supabase
-    .from("cached_items")
-    .select("spotify_id")
-    .eq("spotify_id", spotify_id)
-    .maybeSingle();
+  const wantHistory = request.nextUrl.searchParams.get("lite") !== "1";
+
+  const [{ data: cached, error: cacheErr }, { data: existing, error: findErr }] =
+    await Promise.all([
+      supabase
+        .from("cached_items")
+        .select("spotify_id")
+        .eq("spotify_id", spotify_id)
+        .maybeSingle(),
+      supabase
+        .from("ratings")
+        .select("id, score")
+        .eq("user_id", user.id)
+        .eq("spotify_id", spotify_id)
+        .maybeSingle(),
+    ]);
 
   if (cacheErr) {
     return NextResponse.json({ error: cacheErr.message }, { status: 500 });
@@ -282,13 +293,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: upsertErr.message }, { status: 500 });
     }
   }
-
-  const { data: existing, error: findErr } = await supabase
-    .from("ratings")
-    .select("id, score")
-    .eq("user_id", user.id)
-    .eq("spotify_id", spotify_id)
-    .maybeSingle();
 
   if (findErr) {
     return NextResponse.json({ error: findErr.message }, { status: 500 });
@@ -377,10 +381,7 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const [full, score_history] = await Promise.all([
-    fetchRatingById(supabase, ratingId),
-    loadScoreHistory(supabase, user.id, spotify_id),
-  ]);
+  const full = await fetchRatingById(supabase, ratingId);
   if (!full) {
     return NextResponse.json({ error: "Failed to load saved rating" }, { status: 500 });
   }
@@ -391,5 +392,10 @@ export async function POST(request: NextRequest) {
     });
   });
 
+  if (!wantHistory) {
+    return NextResponse.json({ rating: full });
+  }
+
+  const score_history = await loadScoreHistory(supabase, user.id, spotify_id);
   return NextResponse.json({ rating: full, score_history });
 }

@@ -181,7 +181,7 @@ export function NowPlayingRatingDialog({
     onRatingUpdated(optimistic);
     onOpenChange(false);
     try {
-      const res = await fetchWithRetry("/api/ratings", {
+      const res = await fetchWithRetry("/api/ratings?lite=1", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -17,6 +17,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { LiveSessionButton } from "@/components/LiveSessionButton";
 import { RecentlyPlayed } from "@/components/RecentlyPlayed";
+import { PlayerSeekBar } from "@/components/PlayerSeekBar";
 import {
   clearActiveLiveSession,
   getActiveLiveSession,
@@ -35,7 +36,7 @@ import {
   unregisterAuditClientProvider,
 } from "@/lib/audit/auditBridge";
 import { prefetchTagsCatalog } from "@/lib/ratings/tagsCache";
-import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
+import { userFacingFetchError } from "@/lib/http/fetchRetry";
 import {
   getPlaybackAccessToken,
   startPlaybackTokenKeepalive,
@@ -74,14 +75,6 @@ import {
 } from "@/lib/spotify/player";
 import { cn } from "@/lib/utils";
 import type { RatingDetail } from "@/lib/types/ratings";
-
-function formatMs(ms: number): string {
-  if (!Number.isFinite(ms) || ms < 0) ms = 0;
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
-}
 
 function PlaylistContextLine({
   name,
@@ -154,6 +147,7 @@ export function Player() {
   const ratingTrackIdRef = useRef<string | null>(null);
   /** Bumped on every local rating mutation so stale GETs cannot wipe the badge. */
   const ratingMutationGenRef = useRef(0);
+  const ratingByTrackIdRef = useRef<Map<string, RatingDetail | null>>(new Map());
   const hostSyncTriggerRef = useRef<() => void>(() => {});
   const refreshAfterTransportRef = useRef<() => Promise<void>>(async () => {});
   const lastRefreshAfterTransportAtRef = useRef(0);
@@ -171,7 +165,6 @@ export function Player() {
 
   const {
     playback,
-    displayProgressMs,
     applyPlayback,
     fetchApiPlayback,
     refreshAfterTransport,
@@ -482,12 +475,17 @@ export function Player() {
     }
     ratingTrackIdRef.current = nowTrackId;
     const fetchGen = ratingMutationGenRef.current;
-    setCurrentTrackRating(null);
+    const trackIdForFetch = nowTrackId;
+    const cached = ratingByTrackIdRef.current.get(trackIdForFetch);
+    if (cached !== undefined) {
+      setCurrentTrackRating(cached);
+    } else {
+      setCurrentTrackRating(null);
+    }
     const ac = new AbortController();
-    // lite=1 skips score_history — Player only needs the badge score.
-    void fetchWithRetry(
-      `/api/ratings?spotify_id=${encodeURIComponent(nowTrackId)}&lite=1`,
-      { signal: ac.signal },
+    void fetch(
+      `/api/ratings?spotify_id=${encodeURIComponent(trackIdForFetch)}&lite=1`,
+      { signal: ac.signal, cache: "no-store" },
     )
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as {
@@ -496,24 +494,29 @@ export function Player() {
         };
         if (
           ac.signal.aborted ||
-          ratingTrackIdRef.current !== nowTrackId ||
+          ratingTrackIdRef.current !== trackIdForFetch ||
           ratingMutationGenRef.current !== fetchGen
         ) {
           return;
         }
         if (!res.ok) {
+          ratingByTrackIdRef.current.set(trackIdForFetch, null);
           setCurrentTrackRating(null);
           return;
         }
-        setCurrentTrackRating(body.rating ?? null);
+        const next = body.rating ?? null;
+        ratingByTrackIdRef.current.set(trackIdForFetch, next);
+        setCurrentTrackRating(next);
       })
       .catch(() => {
         if (
           !ac.signal.aborted &&
-          ratingTrackIdRef.current === nowTrackId &&
+          ratingTrackIdRef.current === trackIdForFetch &&
           ratingMutationGenRef.current === fetchGen
         ) {
-          setCurrentTrackRating(null);
+          setCurrentTrackRating(
+            ratingByTrackIdRef.current.get(trackIdForFetch) ?? null,
+          );
         }
       });
     return () => ac.abort();
@@ -679,29 +682,23 @@ export function Player() {
         ? "Paused · this browser"
         : null;
 
-  const duration = playback?.durationMs ?? 0;
-  const position = displayProgressMs;
-  const progress = duration > 0 ? Math.min(100, (position / duration) * 100) : 0;
-
   const canShowRate = Boolean(
     nowTrackId && hasAnyTrack && nowPlayingIsRateableTrack,
   );
 
-  const onSeekBarClick = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const ratio = Math.min(1, Math.max(0, x / rect.width));
-    const ms = Math.floor(ratio * duration);
-    if (playback) {
-      applyPlayback({
-        ...playback,
-        progressMsAtSync: ms,
-        syncedAt: Date.now(),
-      });
-    }
-    runTransport(() => seek(ms));
-  };
+  const onSeek = useCallback(
+    (ms: number) => {
+      if (playback) {
+        applyPlayback({
+          ...playback,
+          progressMsAtSync: ms,
+          syncedAt: Date.now(),
+        });
+      }
+      runTransport(() => seek(ms));
+    },
+    [applyPlayback, playback, runTransport],
+  );
 
   const onVolume = (vals: number[]) => {
     const v = vals[0] ?? 70;
@@ -819,29 +816,7 @@ export function Player() {
         {connectError ? (
           <p className="truncate px-4 pt-1 text-xs text-amber-300/90">{connectError}</p>
         ) : null}
-        <div className="px-4 pt-2">
-          <div
-            role="slider"
-            tabIndex={0}
-            aria-valuenow={Math.round(progress)}
-            className="h-0.5 w-full cursor-pointer rounded-full bg-white/10"
-            onClick={onSeekBarClick}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-              }
-            }}
-          >
-            <div
-              className="h-full rounded-full bg-wam"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <div className="mt-1 flex justify-between text-[10px] tabular-nums text-white/30">
-            <span>{formatMs(position)}</span>
-            <span>{formatMs(duration)}</span>
-          </div>
-        </div>
+        <PlayerSeekBar playback={playback} onSeek={onSeek} compact />
         <div className="flex items-center justify-between gap-4 px-4 pb-3 pt-2">
           <button
             type="button"
@@ -970,33 +945,7 @@ export function Player() {
             </button>
             <RecentlyPlayed />
           </div>
-          <div className="flex w-full flex-col gap-1.5">
-            <div className="flex w-full items-center gap-2">
-              <span className="hidden shrink-0 text-xs tabular-nums text-white/40 md:inline">
-                {formatMs(position)}
-              </span>
-              <div
-                role="slider"
-                tabIndex={0}
-                aria-valuenow={Math.round(progress)}
-                className="h-1 min-w-0 flex-1 cursor-pointer rounded-full bg-white/10 md:h-0.5"
-                onClick={onSeekBarClick}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                  }
-                }}
-              >
-                <div
-                  className="h-full rounded-full bg-wam"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <span className="hidden shrink-0 text-xs tabular-nums text-white/40 md:inline">
-                {formatMs(duration)}
-              </span>
-            </div>
-          </div>
+          <PlayerSeekBar playback={playback} onSeek={onSeek} />
         </div>
 
         <div className="order-3 hidden min-h-0 flex-1 basis-0 items-center justify-end gap-4 md:order-none md:flex md:pl-3">
@@ -1052,11 +1001,13 @@ export function Player() {
           onRatingUpdated={(r) => {
             ratingMutationGenRef.current += 1;
             if (r == null) {
+              if (nowTrackId) ratingByTrackIdRef.current.set(nowTrackId, null);
               if (ratingTrackIdRef.current === nowTrackId) {
                 setCurrentTrackRating(null);
               }
               return;
             }
+            ratingByTrackIdRef.current.set(r.spotify_id, r);
             if (r.spotify_id !== nowTrackId) return;
             setCurrentTrackRating(r);
           }}

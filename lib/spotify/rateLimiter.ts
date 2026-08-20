@@ -112,35 +112,20 @@ export function isSpotify429Error(error: unknown): boolean {
 /** Minimum gap between Spotify Web API calls per user (all endpoints). */
 const USER_REQUEST_GAP_MS = 1_200;
 const lastUserRequestAt = new Map<string, number>();
-const inflightByUser = new Map<string, Promise<unknown>>();
 
 /**
- * Serialize + space out Spotify calls per user. Coalesces concurrent callers
- * (e.g. Player poll + live sync) into one in-flight request.
+ * Space out Spotify calls per user.
+ * Concurrent callers are NOT coalesced — that reused stale in-flight responses after skip.
  */
 export async function withSpotifyUserThrottle<T>(
   userId: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const existing = inflightByUser.get(userId);
-  if (existing) {
-    return existing as Promise<T>;
+  const last = lastUserRequestAt.get(userId) ?? 0;
+  const wait = USER_REQUEST_GAP_MS - (Date.now() - last);
+  if (wait > 0) {
+    await new Promise((resolve) => setTimeout(resolve, wait));
   }
-
-  const run = (async () => {
-    const last = lastUserRequestAt.get(userId) ?? 0;
-    const wait = USER_REQUEST_GAP_MS - (Date.now() - last);
-    if (wait > 0) {
-      await new Promise((resolve) => setTimeout(resolve, wait));
-    }
-    lastUserRequestAt.set(userId, Date.now());
-    try {
-      return await fn();
-    } finally {
-      inflightByUser.delete(userId);
-    }
-  })();
-
-  inflightByUser.set(userId, run);
-  return run;
+  lastUserRequestAt.set(userId, Date.now());
+  return fn();
 }

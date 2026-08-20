@@ -137,17 +137,17 @@ async function enrichPlayback(
 export async function GET(request: NextRequest) {
   const fresh = request.nextUrl.searchParams.get("fresh") === "1";
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const [{ data: userData }, { data: sessionData }] = await Promise.all([
+    supabase.auth.getUser(),
+    supabase.auth.getSession(),
+  ]);
+  const user = userData.user;
+  const session = sessionData.session;
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
   const hasCredentials = hasSpotifyProviderCredentials(session, user);
   const circuit = getSpotifyCircuitState();
 
@@ -207,7 +207,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const playback = await fetchCurrentPlayback(accessToken, { userId: user.id });
+    const playback = await fetchCurrentPlayback(accessToken, {
+      userId: user.id,
+      bypassCache: fresh,
+    });
     recordSpotifySuccess();
 
     if (IS_DEV) {
