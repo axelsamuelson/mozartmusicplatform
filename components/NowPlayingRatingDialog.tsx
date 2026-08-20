@@ -105,9 +105,10 @@ export function NowPlayingRatingDialog({
             { signal: ac.signal },
           ),
           loadTagsCatalog(),
-          fetchWithRetry(`/api/ratings?spotify_id=${encodeURIComponent(spotifyId)}`, {
-            signal: ac.signal,
-          }),
+          fetchWithRetry(
+            `/api/ratings?spotify_id=${encodeURIComponent(spotifyId)}&lite=1`,
+            { signal: ac.signal },
+          ),
         ]);
 
         if (ac.signal.aborted) return;
@@ -160,6 +161,8 @@ export function NowPlayingRatingDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    const savedForId = spotifyId;
+    const previousRating = rating;
     const optimistic: RatingDetail = {
       id: rating?.id ?? `optimistic-${spotifyId}`,
       spotify_id: spotifyId,
@@ -182,13 +185,19 @@ export function NowPlayingRatingDialog({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          spotify_id: spotifyId,
+          spotify_id: savedForId,
           score,
           comment: comment.trim() || null,
           tempo,
           intensity,
           genre_ids: genreIds,
           moment_ids: momentIds,
+          item: {
+            type: itemType,
+            name: title,
+            artist_name: artist || null,
+            image_url: cover,
+          },
         }),
       });
       const body = (await res.json().catch(() => ({}))) as {
@@ -196,9 +205,11 @@ export function NowPlayingRatingDialog({
         rating?: RatingDetail;
       };
       if (!res.ok || !body.rating) {
-        onRatingUpdated(rating);
+        if (savedForId === spotifyId) {
+          onRatingUpdated(previousRating);
+          onOpenChange(true);
+        }
         toast.error(body.error || "Could not save rating");
-        onOpenChange(true);
         return;
       }
       setRating(body.rating);
@@ -206,9 +217,11 @@ export function NowPlayingRatingDialog({
       dispatchRatingsMutated();
       toast.success("Rating saved");
     } catch (e) {
-      onRatingUpdated(rating);
+      if (savedForId === spotifyId) {
+        onRatingUpdated(previousRating);
+        onOpenChange(true);
+      }
       toast.error(userFacingFetchError(e, "Could not save rating. Try again."));
-      onOpenChange(true);
     } finally {
       setSaving(false);
     }

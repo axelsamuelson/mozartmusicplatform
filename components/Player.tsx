@@ -151,6 +151,8 @@ export function Player() {
     name: null,
   });
   const ratingTrackIdRef = useRef<string | null>(null);
+  /** Bumped on every local rating mutation so stale GETs cannot wipe the badge. */
+  const ratingMutationGenRef = useRef(0);
   const hostSyncTriggerRef = useRef<() => void>(() => {});
   const refreshAfterTransportRef = useRef<() => Promise<void>>(async () => {});
   const lastRefreshAfterTransportAtRef = useRef(0);
@@ -478,17 +480,26 @@ export function Player() {
       return;
     }
     ratingTrackIdRef.current = nowTrackId;
+    const fetchGen = ratingMutationGenRef.current;
     setCurrentTrackRating(null);
     const ac = new AbortController();
-    void fetchWithRetry(`/api/ratings?spotify_id=${encodeURIComponent(nowTrackId)}`, {
-      signal: ac.signal,
-    })
+    // lite=1 skips score_history — Player only needs the badge score.
+    void fetchWithRetry(
+      `/api/ratings?spotify_id=${encodeURIComponent(nowTrackId)}&lite=1`,
+      { signal: ac.signal },
+    )
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;
           rating?: RatingDetail | null;
         };
-        if (ac.signal.aborted || ratingTrackIdRef.current !== nowTrackId) return;
+        if (
+          ac.signal.aborted ||
+          ratingTrackIdRef.current !== nowTrackId ||
+          ratingMutationGenRef.current !== fetchGen
+        ) {
+          return;
+        }
         if (!res.ok) {
           setCurrentTrackRating(null);
           return;
@@ -496,7 +507,11 @@ export function Player() {
         setCurrentTrackRating(body.rating ?? null);
       })
       .catch(() => {
-        if (!ac.signal.aborted && ratingTrackIdRef.current === nowTrackId) {
+        if (
+          !ac.signal.aborted &&
+          ratingTrackIdRef.current === nowTrackId &&
+          ratingMutationGenRef.current === fetchGen
+        ) {
           setCurrentTrackRating(null);
         }
       });
@@ -1012,7 +1027,17 @@ export function Player() {
           displayTitle={hasAnyTrack ? trackTitle : ""}
           displayArtist={hasAnyTrack ? artistLine : ""}
           displayImageUrl={artUrl}
-          onRatingUpdated={(r) => setCurrentTrackRating(r)}
+          onRatingUpdated={(r) => {
+            ratingMutationGenRef.current += 1;
+            if (r == null) {
+              if (ratingTrackIdRef.current === nowTrackId) {
+                setCurrentTrackRating(null);
+              }
+              return;
+            }
+            if (r.spotify_id !== nowTrackId) return;
+            setCurrentTrackRating(r);
+          }}
         />
       ) : null}
     </div>

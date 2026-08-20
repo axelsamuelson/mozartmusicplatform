@@ -70,6 +70,7 @@ export async function GET(request: NextRequest) {
   }
 
   if (spotifyId) {
+    const lite = request.nextUrl.searchParams.get("lite") === "1";
     const { data, error } = await supabase
       .from("ratings")
       .select(RATING_SELECT)
@@ -79,6 +80,12 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    if (lite) {
+      return NextResponse.json({
+        rating: data ? normalizeRating(data as Record<string, unknown>) : null,
+      });
     }
 
     const score_history = await loadScoreHistory(supabase, user.id, spotifyId);
@@ -175,6 +182,13 @@ type PostBody = {
   /** @deprecated */
   mood_tag_id?: number;
   moment_ids?: number[];
+  /** Optional metadata so we can upsert cached_items without a prior item open. */
+  item?: {
+    type?: string;
+    name?: string;
+    artist_name?: string | null;
+    image_url?: string | null;
+  };
 };
 
 export async function POST(request: NextRequest) {
@@ -236,15 +250,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: cacheErr.message }, { status: 500 });
   }
   if (!cached) {
-    return NextResponse.json(
-      { error: "Item is not cached. Open the item from search first." },
-      { status: 400 },
+    const meta = body.item;
+    const name =
+      typeof meta?.name === "string" && meta.name.trim()
+        ? meta.name.trim()
+        : null;
+    if (!name) {
+      return NextResponse.json(
+        { error: "Item is not cached. Open the item from search first." },
+        { status: 400 },
+      );
+    }
+    const type =
+      meta?.type === "album" || meta?.type === "artist" ? meta.type : "track";
+    const now = new Date().toISOString();
+    const { error: upsertErr } = await supabase.from("cached_items").upsert(
+      {
+        spotify_id,
+        type,
+        name,
+        artist_name:
+          typeof meta?.artist_name === "string" ? meta.artist_name : null,
+        image_url: typeof meta?.image_url === "string" ? meta.image_url : null,
+        preview_url: null,
+        genres: null,
+        cached_at: now,
+      },
+      { onConflict: "spotify_id" },
     );
+    if (upsertErr) {
+      return NextResponse.json({ error: upsertErr.message }, { status: 500 });
+    }
   }
 
   const { data: existing, error: findErr } = await supabase
     .from("ratings")
-    .select("id")
+    .select("id, score")
     .eq("user_id", user.id)
     .eq("spotify_id", spotify_id)
     .maybeSingle();
@@ -258,8 +299,7 @@ export async function POST(request: NextRequest) {
 
   if (existing) {
     ratingId = existing.id;
-    const prior = await fetchRatingById(supabase, ratingId);
-    previousScore = prior?.score;
+    previousScore = existing.score as number;
     const updatePayload: Record<string, unknown> = {
       score,
       comment: comment === "" ? null : comment,
@@ -299,41 +339,48 @@ export async function POST(request: NextRequest) {
     ratingId = inserted.id;
   }
 
-  const { error: delG } = await supabase
-    .from("rating_genres")
-    .delete()
-    .eq("rating_id", ratingId);
+  const [{ error: delG }, { error: delMom }] = await Promise.all([
+    supabase.from("rating_genres").delete().eq("rating_id", ratingId),
+    supabase.from("rating_moments").delete().eq("rating_id", ratingId),
+  ]);
   if (delG) {
     return NextResponse.json({ error: delG.message }, { status: 500 });
   }
-
-  if (genre_ids.length) {
-    const { error: insG } = await supabase.from("rating_genres").insert(
-      genre_ids.map((genre_tag_id) => ({ rating_id: ratingId, genre_tag_id })),
-    );
-    if (insG) {
-      return NextResponse.json({ error: insG.message }, { status: 500 });
-    }
-  }
-
-  const { error: delMom } = await supabase
-    .from("rating_moments")
-    .delete()
-    .eq("rating_id", ratingId);
   if (delMom) {
     return NextResponse.json({ error: delMom.message }, { status: 500 });
   }
 
-  if (moment_ids.length) {
-    const { error: insMom } = await supabase.from("rating_moments").insert(
-      moment_ids.map((moment_tag_id) => ({ rating_id: ratingId, moment_tag_id })),
+  const tagWrites: PromiseLike<{ error: { message: string } | null }>[] = [];
+  if (genre_ids.length) {
+    tagWrites.push(
+      supabase.from("rating_genres").insert(
+        genre_ids.map((genre_tag_id) => ({ rating_id: ratingId, genre_tag_id })),
+      ),
     );
-    if (insMom) {
-      return NextResponse.json({ error: insMom.message }, { status: 500 });
+  }
+  if (moment_ids.length) {
+    tagWrites.push(
+      supabase.from("rating_moments").insert(
+        moment_ids.map((moment_tag_id) => ({
+          rating_id: ratingId,
+          moment_tag_id,
+        })),
+      ),
+    );
+  }
+  if (tagWrites.length) {
+    const tagResults = await Promise.all(tagWrites);
+    for (const r of tagResults) {
+      if (r.error) {
+        return NextResponse.json({ error: r.error.message }, { status: 500 });
+      }
     }
   }
 
-  const full = await fetchRatingById(supabase, ratingId);
+  const [full, score_history] = await Promise.all([
+    fetchRatingById(supabase, ratingId),
+    loadScoreHistory(supabase, user.id, spotify_id),
+  ]);
   if (!full) {
     return NextResponse.json({ error: "Failed to load saved rating" }, { status: 500 });
   }
@@ -344,6 +391,5 @@ export async function POST(request: NextRequest) {
     });
   });
 
-  const score_history = await loadScoreHistory(supabase, user.id, spotify_id);
   return NextResponse.json({ rating: full, score_history });
 }

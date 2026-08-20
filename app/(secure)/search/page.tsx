@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { glassCardTight, glassPanel, pageHeading, pageSub } from "@/lib/wamUi";
 import type { ItemType, SpotifySearchRow } from "@/lib/spotify/api";
+import { WAM_RATINGS_MUTATED } from "@/lib/wamRatingEvents";
 import { cn } from "@/lib/utils";
 
 type FilterTab = "all" | ItemType;
@@ -28,18 +29,25 @@ export default function SearchPage() {
 
   useEffect(() => {
     const ac = new AbortController();
-    fetch("/api/ratings?scores_only=1", { signal: ac.signal })
-      .then(async (res) => {
-        const body = (await res.json().catch(() => ({}))) as {
-          scores?: Record<string, number>;
-        };
-        if (!res.ok) return;
-        setScoresBySpotifyId(body.scores ?? {});
-      })
-      .catch(() => {
-        /* ignore */
-      });
-    return () => ac.abort();
+    function loadScores() {
+      fetch("/api/ratings?scores_only=1", { signal: ac.signal })
+        .then(async (res) => {
+          const body = (await res.json().catch(() => ({}))) as {
+            scores?: Record<string, number>;
+          };
+          if (!res.ok) return;
+          setScoresBySpotifyId(body.scores ?? {});
+        })
+        .catch(() => {
+          /* ignore */
+        });
+    }
+    loadScores();
+    window.addEventListener(WAM_RATINGS_MUTATED, loadScores);
+    return () => {
+      ac.abort();
+      window.removeEventListener(WAM_RATINGS_MUTATED, loadScores);
+    };
   }, []);
 
   useEffect(() => {

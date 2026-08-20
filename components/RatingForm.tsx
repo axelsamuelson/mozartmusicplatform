@@ -96,11 +96,13 @@ export function RatingForm({
         toast.error(body.error || "Could not save rating");
         return;
       }
-      if (body.rating) {
-        onSaved(body.rating, body.score_history);
-        dispatchRatingsMutated();
-        toast.success("Rating saved");
+      if (!body.rating) {
+        toast.error("Could not save rating");
+        return;
       }
+      onSaved(body.rating, body.score_history);
+      dispatchRatingsMutated();
+      toast.success("Rating saved");
     } catch (e) {
       toast.error(userFacingFetchError(e, "Could not save rating. Try again."));
     } finally {
