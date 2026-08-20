@@ -49,6 +49,15 @@ export async function GET() {
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
+    if (res.status === 403) {
+      return NextResponse.json(
+        {
+          error:
+            "Missing Spotify permission for listening history. Reconnect Spotify to grant access.",
+        },
+        { status: 403 },
+      );
+    }
     return NextResponse.json(
       { error: `Spotify ${res.status}: ${text.slice(0, 200)}` },
       { status: res.status },
@@ -60,7 +69,8 @@ export async function GET() {
   const seen = new Set<string>();
   const uniqueIds: string[] = [];
   const itemMap = new Map<string, SpotifyRecentItem>();
-  for (const item of data.items) {
+  for (const item of data.items ?? []) {
+    if (!item?.track?.id) continue;
     if (seen.has(item.track.id)) continue;
     seen.add(item.track.id);
     uniqueIds.push(item.track.id);
