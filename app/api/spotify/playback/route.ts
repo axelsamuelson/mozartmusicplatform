@@ -1,5 +1,9 @@
-import { NextResponse, type NextRequest } from "next/server";
+import { after, NextResponse, type NextRequest } from "next/server";
 
+import {
+  shouldRecordListeningHistory,
+  upsertListeningHistory,
+} from "@/lib/playback/listeningHistory";
 import { CACHE_NO_STORE } from "@/lib/spotify/cacheHeaders";
 import {
   fetchCurrentPlayback,
@@ -38,9 +42,37 @@ function withServerTime<T extends SpotifyPlaybackApiResponse>(body: T) {
 function playbackJson(
   body: SpotifyPlaybackApiResponse,
   userId: string,
+  supabase?: Awaited<ReturnType<typeof createClient>>,
 ): NextResponse {
   setDedupedPlayback(userId, body);
   setLastKnownPlayback(userId, body);
+
+  if (
+    supabase &&
+    "trackId" in body &&
+    typeof body.trackId === "string" &&
+    body.trackId &&
+    body.itemKind !== "episode" &&
+    typeof body.trackName === "string" &&
+    body.trackName &&
+    shouldRecordListeningHistory(userId, body.trackId)
+  ) {
+    const trackId = body.trackId;
+    const trackName = body.trackName;
+    const artistName = body.artistName ?? null;
+    const artistId = body.artistId ?? null;
+    const imageUrl = body.imageUrl ?? null;
+    after(() =>
+      upsertListeningHistory(supabase, userId, {
+        spotifyId: trackId,
+        name: trackName,
+        artistName,
+        artistId,
+        imageUrl,
+      }),
+    );
+  }
+
   const circuit = getSpotifyCircuitState();
   return NextResponse.json(withServerTime(body), {
     headers: {
@@ -190,7 +222,7 @@ export async function GET(request: NextRequest) {
 
     if (!playback) {
       const empty: SpotifyPlaybackApiResponse = { isPlaying: false };
-      return playbackJson(empty, user.id);
+      return playbackJson(empty, user.id, supabase);
     }
 
     try {
@@ -200,14 +232,14 @@ export async function GET(request: NextRequest) {
         accessToken,
         playback,
       );
-      return playbackJson(body, user.id);
+      return playbackJson(body, user.id, supabase);
     } catch (enrichErr) {
       const enrichMsg =
         enrichErr instanceof Error ? enrichErr.message : String(enrichErr);
       if (IS_DEV) {
         console.warn("[playback] enrich failed, returning raw playback:", enrichMsg);
       }
-      return playbackJson(playback, user.id);
+      return playbackJson(playback, user.id, supabase);
     }
   } catch (e) {
     if (isSpotify429Error(e)) {

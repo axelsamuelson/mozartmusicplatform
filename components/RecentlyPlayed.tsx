@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { History } from "lucide-react";
@@ -16,7 +16,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
-import type { RecentTrack } from "@/app/api/spotify/recently-played/route";
+import type { RecentTrack } from "@/lib/playback/recentTrack";
+import { loadLocalRecentlyPlayed } from "@/lib/playback/recentlyPlayedLocal";
+
+const CLIENT_FETCH_TIMEOUT_MS = 8_000;
 
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -28,37 +31,137 @@ function timeAgo(iso: string): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+function mergeRecentTracks(
+  local: RecentTrack[],
+  remote: RecentTrack[],
+): RecentTrack[] {
+  const byId = new Map<string, RecentTrack>();
+  for (const t of [...local, ...remote]) {
+    const prev = byId.get(t.spotifyId);
+    if (!prev) {
+      byId.set(t.spotifyId, t);
+      continue;
+    }
+    const newer =
+      new Date(t.playedAt).getTime() >= new Date(prev.playedAt).getTime()
+        ? t
+        : prev;
+    byId.set(t.spotifyId, {
+      ...newer,
+      score: newer.score ?? prev.score ?? t.score ?? null,
+      imageUrl: newer.imageUrl ?? prev.imageUrl ?? t.imageUrl,
+      artistId: newer.artistId ?? prev.artistId ?? t.artistId,
+    });
+  }
+  return Array.from(byId.values()).sort(
+    (a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime(),
+  );
+}
+
+async function attachScores(tracks: RecentTrack[]): Promise<RecentTrack[]> {
+  const missing = tracks.filter((t) => t.score == null).map((t) => t.spotifyId);
+  if (missing.length === 0) return tracks;
+  try {
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), 4_000);
+    const res = await fetch("/api/ratings?scores_only=1", {
+      cache: "no-store",
+      signal: ac.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return tracks;
+    const body = (await res.json()) as { scores?: Record<string, number> };
+    const scores = body.scores ?? {};
+    return tracks.map((t) =>
+      t.score != null ? t : { ...t, score: scores[t.spotifyId] ?? null },
+    );
+  } catch {
+    return tracks;
+  }
+}
+
 export function RecentlyPlayed() {
   const [tracks, setTracks] = useState<RecentTrack[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [needsReconnect, setNeedsReconnect] = useState(false);
   const [open, setOpen] = useState(false);
+  const fetchGenRef = useRef(0);
 
   const fetchTracks = useCallback(() => {
+    const gen = ++fetchGenRef.current;
     setLoading(true);
     setError(null);
     setNeedsReconnect(false);
-    fetch("/api/spotify/recently-played")
-      .then(async (res) => {
+
+    const local = loadLocalRecentlyPlayed().map(
+      (t): RecentTrack => ({ ...t, score: null }),
+    );
+    if (local.length > 0) {
+      setTracks(local);
+    }
+
+    void (async () => {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), CLIENT_FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch("/api/spotify/recently-played", {
+          cache: "no-store",
+          signal: ac.signal,
+        });
         const body = (await res.json().catch(() => ({}))) as {
           tracks?: RecentTrack[];
           error?: string;
+          spotifyError?: string | null;
         };
-        if (!res.ok) {
-          const msg = body.error ?? `Could not load recent tracks (${res.status})`;
-          setError(msg);
-          setNeedsReconnect(res.status === 401 || res.status === 403);
-          setTracks([]);
-          return;
+
+        if (gen !== fetchGenRef.current) return;
+
+        const remote = body.tracks ?? [];
+        const merged = await attachScores(mergeRecentTracks(local, remote));
+        if (gen !== fetchGenRef.current) return;
+
+        setTracks(merged);
+
+        const reconnectHint =
+          res.status === 401 ||
+          res.status === 403 ||
+          body.spotifyError?.toLowerCase().includes("reconnect") ||
+          body.spotifyError?.toLowerCase().includes("permission");
+
+        if (merged.length === 0) {
+          if (reconnectHint) {
+            setNeedsReconnect(true);
+            setError(
+              body.spotifyError ??
+                body.error ??
+                "Reconnect Spotify to enable listening history.",
+            );
+          } else if (!res.ok) {
+            setError(body.error ?? `Could not load recent tracks (${res.status})`);
+          } else {
+            setError(null);
+          }
+        } else if (reconnectHint) {
+          setNeedsReconnect(true);
         }
-        setTracks(body.tracks ?? []);
-      })
-      .catch(() => {
-        setError("Could not load recent tracks");
-        setTracks([]);
-      })
-      .finally(() => setLoading(false));
+      } catch (e) {
+        if (gen !== fetchGenRef.current) return;
+        const merged = await attachScores(local);
+        setTracks(merged);
+        if (merged.length === 0) {
+          const timedOut = e instanceof Error && e.name === "AbortError";
+          setError(
+            timedOut
+              ? "Timed out loading history. Try again."
+              : "Could not load recent tracks",
+          );
+        }
+      } finally {
+        clearTimeout(timer);
+        if (gen === fetchGenRef.current) setLoading(false);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -81,7 +184,7 @@ export function RecentlyPlayed() {
         side="top"
         align="end"
         sideOffset={10}
-        className="z-[80] w-80 border-white/10 bg-black/95 text-white backdrop-blur-xl"
+        className="z-[80] max-h-[min(24rem,70vh)] w-80 overflow-y-auto border-white/10 bg-black/95 text-white backdrop-blur-xl"
       >
         <DropdownMenuLabel className="flex items-center justify-between text-white/60">
           <span>Recently played</span>
@@ -99,11 +202,11 @@ export function RecentlyPlayed() {
           ) : null}
         </DropdownMenuLabel>
         <DropdownMenuSeparator className="bg-white/10" />
-        {loading ? (
+        {loading && tracks.length === 0 ? (
           <div className="px-3 py-6 text-center text-sm text-white/40">
             Loading…
           </div>
-        ) : error ? (
+        ) : error && tracks.length === 0 ? (
           <div className="flex flex-col gap-2 px-3 py-4 text-center">
             <p className="text-sm text-amber-300/90">
               {needsReconnect
@@ -129,50 +232,73 @@ export function RecentlyPlayed() {
             )}
           </div>
         ) : tracks.length === 0 ? (
-          <div className="px-3 py-6 text-center text-sm text-white/40">
-            No recent tracks
+          <div className="space-y-2 px-3 py-6 text-center text-sm text-white/40">
+            <p>Nothing here yet.</p>
+            <p className="text-xs text-white/30">
+              Keep Musicator open while you listen on your phone — tracks will
+              appear here.
+            </p>
           </div>
         ) : (
-          tracks.map((t) => (
-            <DropdownMenuItem key={t.spotifyId} asChild className="cursor-pointer p-0 focus:bg-white/10">
-              <Link
-                href={`/item/${t.spotifyId}?type=track`}
-                className="flex items-center gap-3 px-3 py-2"
+          <>
+            {needsReconnect ? (
+              <div className="px-3 py-2 text-[11px] text-amber-300/80">
+                Spotify history unavailable.{" "}
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-amber-200"
+                  onClick={() => void signInWithSpotifyClient()}
+                >
+                  Reconnect
+                </button>
+              </div>
+            ) : null}
+            {tracks.map((t) => (
+              <DropdownMenuItem
+                key={t.spotifyId}
+                asChild
+                className="cursor-pointer p-0 focus:bg-white/10"
               >
-                <div className="relative size-9 shrink-0 overflow-hidden rounded bg-white/10">
-                  {t.imageUrl ? (
-                    <Image
-                      src={t.imageUrl}
-                      alt=""
-                      width={36}
-                      height={36}
-                      className="size-9 object-cover"
-                    />
-                  ) : null}
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-white">
-                    {t.name}
-                  </p>
-                  <p className="truncate text-xs text-white/50">
-                    {t.artistName}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  {t.score != null ? (
-                    <span
-                      className={`rounded-full border px-2 py-0.5 text-xs font-semibold tabular-nums ${scoreBadgeClass(t.score)}`}
-                    >
-                      {t.score}
+                <Link
+                  href={`/item/${t.spotifyId}?type=track`}
+                  className="flex items-center gap-3 px-3 py-2"
+                  onClick={() => setOpen(false)}
+                >
+                  <div className="relative size-9 shrink-0 overflow-hidden rounded bg-white/10">
+                    {t.imageUrl ? (
+                      <Image
+                        src={t.imageUrl}
+                        alt=""
+                        width={36}
+                        height={36}
+                        className="size-9 object-cover"
+                      />
+                    ) : null}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-white">
+                      {t.name}
+                    </p>
+                    <p className="truncate text-xs text-white/50">
+                      {t.artistName}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    {t.score != null ? (
+                      <span
+                        className={`rounded-full border px-2 py-0.5 text-xs font-semibold tabular-nums ${scoreBadgeClass(t.score)}`}
+                      >
+                        {t.score}
+                      </span>
+                    ) : null}
+                    <span className="text-xs text-white/30">
+                      {timeAgo(t.playedAt)}
                     </span>
-                  ) : null}
-                  <span className="text-xs text-white/30">
-                    {timeAgo(t.playedAt)}
-                  </span>
-                </div>
-              </Link>
-            </DropdownMenuItem>
-          ))
+                  </div>
+                </Link>
+              </DropdownMenuItem>
+            ))}
+          </>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

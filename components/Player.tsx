@@ -54,6 +54,7 @@ import {
 } from "@/lib/playlist/urls";
 import { useUnifiedPlayback } from "@/lib/playback/useUnifiedPlayback";
 import type { PlaybackState } from "@/lib/playback/types";
+import { recordLocalRecentlyPlayed } from "@/lib/playback/recentlyPlayedLocal";
 import { isSpotifyCircuitOpen } from "@/lib/spotify/rateLimiter";
 import {
   connectPlayback,
@@ -521,6 +522,27 @@ export function Player() {
   useEffect(() => {
     setRateDialogOpen(false);
   }, [nowTrackId]);
+
+  const lastRecordedTrackIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (
+      !nowTrackId ||
+      !playback?.trackName ||
+      playback.itemKind === "episode"
+    ) {
+      return;
+    }
+    if (lastRecordedTrackIdRef.current === nowTrackId) return;
+    lastRecordedTrackIdRef.current = nowTrackId;
+    recordLocalRecentlyPlayed({
+      spotifyId: nowTrackId,
+      name: playback.trackName,
+      artistName: playback.artistName ?? "Unknown",
+      artistId: playback.artistId,
+      imageUrl: playback.imageUrl,
+    });
+  }, [nowTrackId, playback]);
 
   useEffect(() => {
     if (!hasUser || !nowTrackId || !nowPlayingIsRateableTrack) return;
