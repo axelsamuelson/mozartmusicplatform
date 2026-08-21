@@ -41,6 +41,8 @@ import { cn } from "@/lib/utils";
 export type LiveSessionButtonProps = {
   canStart: boolean;
   className?: string;
+  /** Icon-only trigger for tight layouts (mobile player). */
+  compact?: boolean;
 };
 
 function AnonymousModeToggle({
@@ -75,7 +77,7 @@ function AnonymousModeToggle({
   );
 }
 
-export function LiveSessionButton({ canStart, className }: LiveSessionButtonProps) {
+export function LiveSessionButton({ canStart, className, compact }: LiveSessionButtonProps) {
   const router = useRouter();
   const advancedModes = isLiveAdvancedModesEnabled();
   const simulateEnabled = isLiveSimulateEnabled();
@@ -449,12 +451,14 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
           type="button"
           onClick={() => setDialogOpen(true)}
           className={cn(
-            "shrink-0 rounded-full border border-wam/40 bg-wam/10 px-3 py-1 font-mono text-xs font-semibold tracking-widest text-wam transition-colors hover:bg-wam/20",
+            compact
+              ? "flex size-9 shrink-0 items-center justify-center rounded-full border border-wam/40 bg-wam/10 font-mono text-[10px] font-semibold tracking-wide text-wam"
+              : "shrink-0 rounded-full border border-wam/40 bg-wam/10 px-3 py-1 font-mono text-xs font-semibold tracking-widest text-wam transition-colors hover:bg-wam/20",
             className,
           )}
           aria-label={`Live session ${formattedCode}`}
         >
-          {formattedCode}
+          {compact ? code.slice(0, 4) : formattedCode}
         </button>
       ) : simulateEnabled ? (
         <button
@@ -462,12 +466,14 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
           onClick={() => void handleQuickTest()}
           disabled={starting}
           className={cn(
-            "shrink-0 rounded-full border border-wam/50 bg-wam/15 px-3 py-1 text-xs font-semibold text-wam transition-colors hover:bg-wam/25 disabled:opacity-40",
+            compact
+              ? "flex size-9 shrink-0 items-center justify-center rounded-full border border-wam/50 bg-wam/15 text-wam disabled:opacity-40"
+              : "shrink-0 rounded-full border border-wam/50 bg-wam/15 px-3 py-1 text-xs font-semibold text-wam transition-colors hover:bg-wam/25 disabled:opacity-40",
             className,
           )}
           title="Start test session (4 users, no Spotify)"
         >
-          {starting ? "…" : "Test WAM"}
+          {starting ? "…" : compact ? <Radio className="size-4" aria-hidden /> : "Test WAM"}
         </button>
       ) : (
         <button
@@ -475,12 +481,15 @@ export function LiveSessionButton({ canStart, className }: LiveSessionButtonProp
           onClick={() => void handleStart()}
           disabled={starting || !canStart}
           className={cn(
-            "shrink-0 rounded-full border border-white/20 px-3 py-1 text-xs font-medium text-white/60 transition-colors hover:border-wam hover:text-wam disabled:opacity-40",
+            compact
+              ? "flex size-9 shrink-0 items-center justify-center rounded-full text-white/60 active:bg-white/10 active:text-wam disabled:opacity-40"
+              : "shrink-0 rounded-full border border-white/20 px-3 py-1 text-xs font-medium text-white/60 transition-colors hover:border-wam hover:text-wam disabled:opacity-40",
             className,
           )}
           title={canStart ? "Start a live rating session" : "Play a track first"}
+          aria-label="Start live session"
         >
-          {starting ? "…" : "Live"}
+          {starting ? "…" : compact ? <Radio className="size-4" aria-hidden /> : "Live"}
         </button>
       )}
 

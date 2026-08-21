@@ -589,9 +589,10 @@ export function Player() {
         return;
       }
       document.documentElement.style.setProperty(
-        "--wam-player-pad",
-        compact ? "110px" : "5rem",
-      );
+          "--wam-player-pad",
+          // Mobile mini-player ~64px content + seek + home-indicator.
+          compact ? "calc(4.75rem + env(safe-area-inset-bottom, 0px))" : "5rem",
+        );
     }
 
     applyPad();
@@ -738,61 +739,73 @@ export function Player() {
         "fixed right-0 bottom-0 left-0 z-40 border-t border-white/10 bg-black/95 text-white backdrop-blur-xl",
       )}
     >
-      {/* Mobile: compact 3-row layout */}
-      <div className="mx-auto flex w-full max-w-6xl flex-col md:hidden">
-        <div className="flex items-center gap-3 px-4 pt-3">
-          <div className="relative size-10 shrink-0 overflow-hidden rounded-md border border-white/10 bg-white/10">
+      {/* Mobile: Spotify-style mini player — seek rail + one dense row */}
+      <div className="mx-auto flex w-full max-w-6xl flex-col pb-[env(safe-area-inset-bottom,0px)] md:hidden">
+        <PlayerSeekBar playback={playback} onSeek={onSeek} compact />
+        <div className="flex items-center gap-2 px-3 py-2">
+          <div className="relative size-11 shrink-0 overflow-hidden rounded-md border border-white/10 bg-white/10">
             {artUrl ? (
               <Image
                 key={nowTrackId ?? "none"}
                 src={artUrl}
                 alt=""
-                width={40}
-                height={40}
-                className="size-10 object-cover"
+                width={44}
+                height={44}
+                className="size-11 object-cover"
               />
             ) : (
-              <div className="flex size-10 items-center justify-center text-white/30">
+              <div className="flex size-11 items-center justify-center text-white/30">
                 <Play className="size-4" />
               </div>
             )}
           </div>
-          <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center gap-0.5">
+
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col justify-center gap-0.5 pr-1">
             {trackHref ? (
               <Link
                 href={trackHref}
-                className="truncate text-sm font-medium text-white hover:underline"
+                className="truncate text-[13px] font-medium leading-tight text-white hover:underline"
               >
                 {trackTitle}
               </Link>
             ) : (
-              <p className="truncate text-sm font-medium text-white">
+              <p className="truncate text-[13px] font-medium leading-tight text-white">
                 {hasAnyTrack ? trackTitle : "Nothing playing"}
               </p>
             )}
-            {artistHref ? (
-              <Link
-                href={artistHref}
-                className="truncate text-xs text-white/50 hover:text-white hover:underline"
-              >
-                {artistLine}
-              </Link>
-            ) : (
-              <p className="truncate text-xs text-white/50">
-                {hasAnyTrack ? artistLine : "—"}
-              </p>
-            )}
-            {playlistContext ? (
-              <PlaylistContextLine
-                name={playlistContext.name}
-                href={playlistContext.href}
-                isWam={playlistContext.isWam}
-                className="mt-0.5"
-              />
+            <div className="flex min-w-0 items-baseline gap-1 truncate text-[11px] leading-tight text-white/50">
+              {artistHref ? (
+                <Link
+                  href={artistHref}
+                  className="min-w-0 truncate hover:text-white hover:underline"
+                >
+                  {artistLine}
+                </Link>
+              ) : (
+                <span className="min-w-0 truncate">
+                  {hasAnyTrack ? artistLine : "—"}
+                </span>
+              )}
+              {playlistContext ? (
+                <>
+                  <span className="shrink-0 text-white/25" aria-hidden>
+                    ·
+                  </span>
+                  <Link
+                    href={playlistContext.href}
+                    className="min-w-0 truncate text-wam/80 hover:text-wam hover:underline"
+                  >
+                    {playlistContext.name}
+                  </Link>
+                </>
+              ) : null}
+            </div>
+            {connectError ? (
+              <p className="truncate text-[10px] text-amber-300/90">{connectError}</p>
             ) : null}
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <LiveSessionButton canStart={Boolean(canShowRate)} />
+
+          <div className="flex shrink-0 items-center gap-0.5">
             {canShowRate ? (
               <button
                 type="button"
@@ -803,50 +816,35 @@ export function Player() {
                     : "Rate this track (R)"
                 }
                 className={cn(
-                  "rounded-full px-3 py-1 text-xs font-semibold tabular-nums transition-colors",
+                  "mr-0.5 flex h-9 min-w-9 items-center justify-center rounded-full px-2.5 text-xs font-semibold tabular-nums transition-colors",
                   currentTrackRating
                     ? scoreBadgeClass(currentTrackRating.score)
-                    : "border border-white/20 text-white/60 hover:border-wam hover:text-wam",
+                    : "border border-white/20 text-white/70 active:border-wam active:text-wam",
                 )}
               >
                 {currentTrackRating ? currentTrackRating.score : "Rate"}
               </button>
             ) : null}
-          </div>
-        </div>
-        {connectError ? (
-          <p className="truncate px-4 pt-1 text-xs text-amber-300/90">{connectError}</p>
-        ) : null}
-        <PlayerSeekBar playback={playback} onSeek={onSeek} compact />
-        <div className="flex items-center justify-between gap-4 px-4 pb-3 pt-2">
-          <button
-            type="button"
-            aria-label="Previous"
-            className="rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-            onClick={onPreviousTrack}
-          >
-            <SkipBack className="size-5" />
-          </button>
-          <button
-            type="button"
-            aria-label={paused ? "Play" : "Pause"}
-            className="flex size-10 shrink-0 items-center justify-center rounded-full bg-wam text-black shadow-md transition-transform hover:scale-[1.03] hover:bg-wam/90"
-            onClick={onTogglePlayPause}
-          >
-            {paused ? (
-              <Play className="size-[18px] fill-current" />
-            ) : (
-              <Pause className="size-[18px] fill-current" />
-            )}
-          </button>
-          <div className="flex items-center gap-3">
+            <LiveSessionButton canStart={Boolean(canShowRate)} compact />
+            <button
+              type="button"
+              aria-label={paused ? "Play" : "Pause"}
+              className="flex size-10 items-center justify-center rounded-full bg-wam text-black shadow-md active:scale-[0.97] active:bg-wam/90"
+              onClick={onTogglePlayPause}
+            >
+              {paused ? (
+                <Play className="size-4 fill-current" />
+              ) : (
+                <Pause className="size-4 fill-current" />
+              )}
+            </button>
             <button
               type="button"
               aria-label="Next"
-              className="rounded-full p-2 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+              className="flex size-9 items-center justify-center rounded-full text-white/70 active:bg-white/10 active:text-white"
               onClick={onNextTrack}
             >
-              <SkipForward className="size-5" />
+              <SkipForward className="size-4" />
             </button>
             <RecentlyPlayed />
           </div>

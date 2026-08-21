@@ -76,26 +76,30 @@ export function PlayerSeekBar({
   };
 
   if (compact) {
+    // Full-bleed top rail: tall hit target, thin visual track, no time labels
+    // (saves a full row on small phones).
     return (
-      <div className={cn("px-4 pt-2", className)}>
-        <div
-          role="slider"
-          tabIndex={0}
-          aria-valuenow={Math.round(progress)}
-          className="h-0.5 w-full cursor-pointer rounded-full bg-white/10"
-          onClick={onSeekBarClick}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" || e.key === " ") e.preventDefault();
-          }}
-        >
+      <div
+        className={cn(
+          "relative flex h-4 w-full cursor-pointer items-end",
+          className,
+        )}
+        onClick={onSeekBarClick}
+        role="slider"
+        tabIndex={0}
+        aria-valuenow={Math.round(progress)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${formatMs(position)} of ${formatMs(duration)}`}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") e.preventDefault();
+        }}
+      >
+        <div className="h-0.5 w-full bg-white/10">
           <div
-            className="h-full rounded-full bg-wam"
+            className="h-full bg-wam"
             style={{ width: `${progress}%` }}
           />
-        </div>
-        <div className="mt-1 flex justify-between text-[10px] tabular-nums text-white/30">
-          <span>{formatMs(position)}</span>
-          <span>{formatMs(duration)}</span>
         </div>
       </div>
     );
