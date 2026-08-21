@@ -19,7 +19,7 @@ import { loadTagsCatalog } from "@/lib/ratings/tagsCache";
 import { userFacingFetchError } from "@/lib/http/fetchRetry";
 import { play, spotifyUri } from "@/lib/spotify/player";
 import { isPlaybackCancelled } from "@/lib/spotify/playerCommandError";
-import { glassCardTight, glassPanel, pageHeading, pageSub, sectionHeading } from "@/lib/wamUi";
+import { glassCardTight, glassPanel, sectionHeading } from "@/lib/wamUi";
 import { cn } from "@/lib/utils";
 import type { ItemType } from "@/lib/spotify/api";
 import type { ScoreHistoryEntry } from "@/lib/ratings/scoreHistory";
@@ -204,10 +204,10 @@ export function ItemView() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-10 px-4 pb-16 pt-24 md:px-6">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-6 px-4 pb-28 pt-20 md:gap-10 md:px-6 md:pb-16 md:pt-24">
       <Button
         variant="ghost"
-        className="w-fit rounded-full px-0 text-white/70 hover:bg-white/10 hover:text-white"
+        className="h-8 w-fit rounded-full px-0 text-sm text-white/70 hover:bg-white/10 hover:text-white"
         asChild
       >
         <Link href={type === "track" ? "/profile/tracks" : "/search"}>
@@ -222,81 +222,87 @@ export function ItemView() {
       ) : item ? (
         <>
           <header
-            className={`flex gap-5 border-b border-white/[0.08] pb-8 ${glassPanel}`}
+            className={cn(
+              glassPanel,
+              "flex items-center gap-3 border-b border-white/[0.08] !p-3 md:gap-5 md:!p-6 md:pb-8",
+            )}
           >
-            <div className="relative size-24 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/10">
+            <div className="relative size-20 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-white/10 md:size-28 md:rounded-2xl">
               {item.image_url ? (
                 <Image
                   src={item.image_url}
                   alt=""
-                  width={96}
-                  height={96}
-                  className="size-24 object-cover"
+                  width={112}
+                  height={112}
+                  className="size-20 object-cover md:size-28"
+                  priority
                 />
               ) : null}
             </div>
-            <div className="min-w-0 flex-1 space-y-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline" className="border-white/25 text-xs text-white/80">
-                  {typeLabel(item.type)}
-                </Badge>
-              </div>
-              <h1 className={`${pageHeading} text-balance`}>{item.name}</h1>
+            <div className="flex min-w-0 flex-1 flex-col justify-center gap-1.5">
+              <Badge
+                variant="outline"
+                className="w-fit border-white/25 text-[10px] text-white/80 md:text-xs"
+              >
+                {typeLabel(item.type)}
+              </Badge>
+              <h1 className="text-balance text-xl font-bold tracking-tight text-white md:text-3xl">
+                {item.name}
+              </h1>
               {item.artist_name ? (
-                <p className={pageSub}>{item.artist_name}</p>
+                <p className="truncate text-sm text-white/50 md:text-base">
+                  {item.artist_name}
+                </p>
               ) : null}
-              {item.type === "track" && platformRank ? (
-                <p className="flex flex-wrap items-center gap-2 text-sm text-white/60">
-                  {rating && Number.isFinite(rating.score) ? (
-                    <span
-                      className={cn(
-                        "inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold tabular-nums",
-                        scoreBadgeClass(rating.score),
-                      )}
-                    >
-                      {rating.score}
-                    </span>
-                  ) : null}
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={playing}
+                  onClick={() => void handlePlay()}
+                  className="h-8 rounded-full bg-wam px-3.5 text-xs font-semibold text-black hover:bg-wam/90 md:h-9 md:px-5 md:text-sm"
+                >
+                  <Play className="size-3.5 fill-current md:size-4" aria-hidden />
+                  {playing
+                    ? "Starting…"
+                    : item.type === "track"
+                      ? "Play"
+                      : "Play on Spotify"}
+                </Button>
+                {item.type === "track" && rating && Number.isFinite(rating.score) ? (
+                  <span
+                    className={cn(
+                      "inline-flex rounded-full border px-2.5 py-0.5 text-xs font-semibold tabular-nums",
+                      scoreBadgeClass(rating.score),
+                    )}
+                  >
+                    {rating.score}
+                  </span>
+                ) : null}
+                {item.type === "track" && platformRank ? (
                   <Link
                     href="/profile/tracks"
-                    className="inline-flex items-baseline gap-1.5 transition-colors hover:text-white"
+                    className="inline-flex items-baseline gap-1 text-xs text-white/55 transition-colors hover:text-white md:text-sm"
                   >
                     <RankLabel
                       rank={platformRank}
                       className="font-semibold text-white"
                     />
-                    <span className="text-white/45">rated tracks</span>
+                    <span className="text-white/40">rated</span>
                   </Link>
-                </p>
-              ) : null}
-              <Button
-                type="button"
-                disabled={playing}
-                onClick={() => void handlePlay()}
-                className="mt-3 rounded-full bg-wam px-5 font-semibold text-black hover:bg-wam/90"
-              >
-                <Play className="size-4 fill-current" aria-hidden />
-                {playing ? "Starting…" : item.type === "track" ? "Play" : "Play on Spotify"}
-              </Button>
+                ) : null}
+              </div>
             </div>
           </header>
 
-          {item.type === "track" ? (
-            <TrackPlaylists
-              spotifyId={item.spotify_id}
-              refreshKey={playlistRefresh}
-              onPlatformRank={setPlatformRank}
-            />
-          ) : null}
-
-          <section className="flex flex-col gap-6">
+          <section className="flex flex-col gap-3 md:gap-6">
             <h2 className={sectionHeading}>Your rating</h2>
             {tagsError ? (
               <p className="text-sm text-red-400">{tagsError}</p>
             ) : tagsLoading || ratingLoading ? (
               <div className="flex flex-col gap-3">
-                <Skeleton className={`h-24 w-full ${glassCardTight}`} />
-                <Skeleton className={`h-40 w-full ${glassCardTight}`} />
+                <Skeleton className={`h-20 w-full ${glassCardTight}`} />
+                <Skeleton className={`h-32 w-full ${glassCardTight}`} />
               </div>
             ) : (
               <RatingForm
@@ -309,6 +315,14 @@ export function ItemView() {
               />
             )}
           </section>
+
+          {item.type === "track" ? (
+            <TrackPlaylists
+              spotifyId={item.spotify_id}
+              refreshKey={playlistRefresh}
+              onPlatformRank={setPlatformRank}
+            />
+          ) : null}
 
           {item.type === "track" ? (
             <ScoreHistory entries={scoreHistory} />

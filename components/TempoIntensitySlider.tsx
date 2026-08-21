@@ -41,12 +41,12 @@ function ScaleRow({
   compact?: boolean;
 }) {
   return (
-    <div className={cn("flex flex-col", compact ? "gap-1.5" : "gap-2")}>
+    <div className={cn("flex flex-col", compact ? "gap-1.5" : "gap-1.5 md:gap-2")}>
       <div className="flex items-center justify-between gap-3">
         <span
           className={cn(
             "font-medium uppercase tracking-wider text-white/50",
-            compact ? "text-[10px]" : "text-xs",
+            compact ? "text-[10px]" : "text-[10px] md:text-xs",
           )}
         >
           {label}
@@ -54,7 +54,7 @@ function ScaleRow({
         <span
           className={cn(
             "font-bold tabular-nums",
-            compact ? "text-lg" : "text-2xl",
+            compact ? "text-lg" : "text-xl md:text-2xl",
             scaleValueColorClass(value),
           )}
         >
@@ -74,7 +74,7 @@ function ScaleRow({
           "[&_[data-slot=slider-thumb]]:size-4 [&_[data-slot=slider-thumb]]:border-0 [&_[data-slot=slider-thumb]]:bg-wam",
         )}
       />
-      <p className={cn("text-white/40", compact ? "text-[10px]" : "text-xs")}>
+      <p className={cn("text-white/40", compact ? "text-[10px]" : "text-[11px] md:text-xs")}>
         {valueLabel}
       </p>
     </div>
@@ -108,33 +108,44 @@ export function TempoIntensitySlider({
   }
 
   return (
-    <div className={cn("flex flex-col", compact ? "gap-3" : isDialog ? "gap-5" : "gap-6")}>
+    <div className={cn("flex flex-col", compact ? "gap-3" : isDialog ? "gap-5" : "gap-4 md:gap-6")}>
       {!compact && !isDialog ? (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-0.5 md:gap-1">
           <span className={sectionHeading}>Tempo & intensity</span>
-          <p className="text-xs leading-relaxed text-white/55">
+          <p className="hidden text-xs leading-relaxed text-white/55 md:block">
             How fast and how intense does this track feel? Used to suggest moment tags.
           </p>
         </div>
       ) : null}
 
-      <ScaleRow
-        label="Tempo"
-        value={tempoVal}
-        onValueChange={setTempo}
-        valueLabel={tempoLabel(tempoVal)}
-        disabled={disabled}
-        compact={compact}
-      />
+      <div
+        className={cn(
+          "grid",
+          compact
+            ? "gap-3"
+            : isDialog
+              ? "grid-cols-1 gap-5"
+              : "grid-cols-2 gap-3 md:gap-5",
+        )}
+      >
+        <ScaleRow
+          label="Tempo"
+          value={tempoVal}
+          onValueChange={setTempo}
+          valueLabel={tempoLabel(tempoVal)}
+          disabled={disabled}
+          compact={compact || !isDialog}
+        />
 
-      <ScaleRow
-        label="Intensity"
-        value={intensityVal}
-        onValueChange={setIntensity}
-        valueLabel={intensityLabel(intensityVal)}
-        disabled={disabled}
-        compact={compact}
-      />
+        <ScaleRow
+          label="Intensity"
+          value={intensityVal}
+          onValueChange={setIntensity}
+          valueLabel={intensityLabel(intensityVal)}
+          disabled={disabled}
+          compact={compact || !isDialog}
+        />
+      </div>
 
       <div className="flex justify-center">
         <span

@@ -46,6 +46,36 @@ export async function GET(request: NextRequest) {
   }
 
   const spotifyId = request.nextUrl.searchParams.get("spotify_id")?.trim();
+  const spotifyIdsParam = request.nextUrl.searchParams.get("spotify_ids")?.trim();
+
+  // Batch score lookup for a specific set of Spotify ids (Recently Played, etc.).
+  if (spotifyIdsParam) {
+    const ids = [
+      ...new Set(
+        spotifyIdsParam
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
+    ].slice(0, 80);
+    const scores: Record<string, number> = {};
+    if (ids.length > 0) {
+      const { data, error } = await supabase
+        .from("ratings")
+        .select("spotify_id, score")
+        .eq("user_id", user.id)
+        .in("spotify_id", ids);
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
+      for (const r of data ?? []) {
+        const sid = r.spotify_id as string;
+        const score = Number(r.score);
+        if (sid && Number.isFinite(score)) scores[sid] = score;
+      }
+    }
+    return NextResponse.json({ scores });
+  }
 
   if (request.nextUrl.searchParams.get("scores_only") === "1") {
     const scores: Record<string, number> = {};

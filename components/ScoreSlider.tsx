@@ -38,7 +38,7 @@ export function ScoreSlider({
   const isDialog = variant === "dialog";
 
   return (
-    <div className={cn("flex flex-col", isDialog ? "gap-4 py-1" : "gap-3", className)}>
+    <div className={cn("flex flex-col", isDialog ? "gap-4 py-1" : "gap-2 md:gap-3", className)}>
       <div className="flex items-baseline justify-between gap-4">
         {isDialog ? (
           <span className="text-sm text-white/60">Score</span>
@@ -48,7 +48,7 @@ export function ScoreSlider({
         <span
           className={cn(
             "tabular-nums font-bold tracking-tight transition-colors",
-            isDialog ? "text-2xl" : "text-4xl font-semibold",
+            isDialog ? "text-2xl" : "text-3xl font-semibold md:text-4xl",
             scoreReadoutClass(value),
           )}
         >
@@ -65,7 +65,7 @@ export function ScoreSlider({
         className={cn(isDialog ? "py-2" : "py-1")}
       />
       {!isDialog ? (
-        <p className="text-xs text-white/50">0 = lowest, 100 = highest</p>
+        <p className="hidden text-xs text-white/50 md:block">0 = lowest, 100 = highest</p>
       ) : null}
     </div>
   );

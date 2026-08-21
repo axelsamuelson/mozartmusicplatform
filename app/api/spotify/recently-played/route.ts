@@ -51,17 +51,26 @@ async function attachScores(
   userId: string,
   tracks: RecentTrack[],
 ): Promise<RecentTrack[]> {
-  const ids = tracks.map((t) => t.spotifyId);
+  const ids = [...new Set(tracks.map((t) => t.spotifyId).filter(Boolean))];
   if (ids.length === 0) return tracks;
-  const { data: ratings } = await supabase
+  const { data: ratings, error } = await supabase
     .from("ratings")
     .select("spotify_id, score")
     .eq("user_id", userId)
     .in("spotify_id", ids);
+  if (error) {
+    if (process.env.NODE_ENV === "development") {
+      console.warn("[recently-played] attachScores failed:", error.message);
+    }
+    return tracks;
+  }
   if (!ratings?.length) return tracks;
-  const scoreMap = new Map(
-    ratings.map((r) => [r.spotify_id as string, r.score as number]),
-  );
+  const scoreMap = new Map<string, number>();
+  for (const r of ratings) {
+    const sid = r.spotify_id as string;
+    const score = Number(r.score);
+    if (sid && Number.isFinite(score)) scoreMap.set(sid, score);
+  }
   return tracks.map((t) => ({
     ...t,
     score: scoreMap.get(t.spotifyId) ?? t.score,

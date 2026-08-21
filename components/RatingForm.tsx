@@ -139,7 +139,7 @@ export function RatingForm({
       onSubmit={handleSubmit}
       className={cn(
         "flex flex-col",
-        isDialog ? "gap-6" : "gap-8",
+        isDialog ? "gap-6" : "gap-5 p-3 md:gap-8 md:p-6",
         !isDialog && glassPanel,
         className,
       )}
@@ -168,19 +168,19 @@ export function RatingForm({
         visualVariant={isDialog ? "dialog" : "default"}
       />
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-1.5 md:gap-2">
         <label htmlFor="rating-comment" className={isDialog ? "text-sm text-white/60" : sectionHeading}>
           Comment {!isDialog ? <span className="font-normal text-white/50">(optional)</span> : null}
         </label>
         <textarea
           id="rating-comment"
-          rows={3}
+          rows={2}
           value={comment}
           onChange={(e) => setComment(e.target.value)}
           disabled={saving || deleting}
           placeholder="Notes, context, anything…"
           className={cn(
-            "min-h-[5rem] w-full resize-y rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2.5 text-sm text-white shadow-none transition-colors outline-none",
+            "min-h-[4rem] w-full resize-y rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2.5 text-sm text-white shadow-none transition-colors outline-none md:min-h-[5rem]",
             "placeholder:text-white/40",
             "focus-visible:border-white/35 focus-visible:ring-[3px] focus-visible:ring-white/25",
             "disabled:cursor-not-allowed disabled:opacity-50",
@@ -188,7 +188,7 @@ export function RatingForm({
         />
       </div>
 
-      <div className={cn("flex flex-wrap items-center gap-3", isDialog && "pt-1")}>
+      <div className={cn("flex flex-wrap items-center gap-2 md:gap-3", isDialog && "pt-1")}>
         <Button
           type="submit"
           disabled={saving || deleting}
@@ -196,7 +196,7 @@ export function RatingForm({
           className={
             isDialog
               ? "rounded-full bg-wam px-6 py-2 font-medium text-black hover:bg-wam/90"
-              : "rounded-full bg-white px-8 py-3 text-base font-medium text-black shadow-lg transition-all duration-300 hover:scale-105 hover:bg-gray-50 hover:shadow-lg disabled:scale-100"
+              : "h-10 rounded-full bg-white px-6 text-sm font-medium text-black shadow-lg transition-all duration-300 hover:scale-105 hover:bg-gray-50 hover:shadow-lg disabled:scale-100 md:h-11 md:px-8 md:text-base"
           }
         >
           {saving ? "Saving…" : isUpdate ? "Update rating" : "Save rating"}
@@ -210,7 +210,7 @@ export function RatingForm({
             className={
               isDialog
                 ? "rounded-full text-white/40 hover:bg-transparent hover:text-red-400"
-                : "rounded-full border border-white/25 bg-transparent px-6 text-white hover:bg-white/10 hover:text-white"
+                : "h-10 rounded-full border border-white/25 bg-transparent px-4 text-sm text-white hover:bg-white/10 hover:text-white md:h-11 md:px-6"
             }
           >
             {deleting ? "Deleting…" : "Delete rating"}

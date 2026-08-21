@@ -468,6 +468,10 @@ async function connectWebPlaybackPlayer(
   });
 
   player.addListener("playback_error", ({ message }) => {
+    // Browser SDK fires this when transport runs without a loaded context
+    // (e.g. user is playing on phone while this tab’s player is idle).
+    const msg = typeof message === "string" ? message : "";
+    if (/no list was loaded/i.test(msg)) return;
     console.error("[WAM Player] playback", message);
   });
 
@@ -818,65 +822,72 @@ export function peekSdkQueuedTrack(
   return track?.id ? track : null;
 }
 
-export async function pause(): Promise<void> {
-  if (innerPlayer) {
-    await innerPlayer.pause();
-    return;
+/** True when this tab’s Web Playback SDK actually has a track/context loaded. */
+async function sdkHasLoadedPlayback(): Promise<boolean> {
+  if (!innerPlayer) return false;
+  if (lastSdkState?.track_window?.current_track?.id) return true;
+  try {
+    const state = await innerPlayer.getCurrentState();
+    return Boolean(state?.track_window?.current_track?.id);
+  } catch {
+    return false;
   }
+}
+
+async function runViaWebApi(
+  command: SpotifyPlayerCommand,
+  run: (token: string, deviceId?: string) => Promise<void>,
+): Promise<void> {
   await withPlaybackToken((token) =>
-    runPlayerCommandWithDeviceRecovery(token, "pause", (deviceId) =>
-      pauseViaApi(token, deviceId),
+    runPlayerCommandWithDeviceRecovery(token, command, (deviceId) =>
+      run(token, deviceId),
     ),
   );
 }
 
+export async function pause(): Promise<void> {
+  if (innerPlayer && (await sdkHasLoadedPlayback())) {
+    await innerPlayer.pause();
+    return;
+  }
+  await runViaWebApi("pause", (token, deviceId) => pauseViaApi(token, deviceId));
+}
+
 export async function resume(): Promise<void> {
-  if (innerPlayer) {
+  if (innerPlayer && (await sdkHasLoadedPlayback())) {
     const player = await ensurePlayer();
     await player.resume();
     return;
   }
-  await withPlaybackToken((token) =>
-    runPlayerCommandWithDeviceRecovery(token, "play", (deviceId) =>
-      resumeViaApi(token, deviceId),
-    ),
-  );
+  await runViaWebApi("play", (token, deviceId) => resumeViaApi(token, deviceId));
 }
 
 export async function next(): Promise<void> {
-  if (innerPlayer) {
+  if (innerPlayer && (await sdkHasLoadedPlayback())) {
     await innerPlayer.nextTrack();
     return;
   }
-  await withPlaybackToken((token) =>
-    runPlayerCommandWithDeviceRecovery(token, "next", (deviceId) =>
-      nextViaApi(token, deviceId),
-    ),
-  );
+  await runViaWebApi("next", (token, deviceId) => nextViaApi(token, deviceId));
 }
 
 export async function previous(): Promise<void> {
-  if (innerPlayer) {
+  if (innerPlayer && (await sdkHasLoadedPlayback())) {
     await innerPlayer.previousTrack();
     return;
   }
-  await withPlaybackToken((token) =>
-    runPlayerCommandWithDeviceRecovery(token, "previous", (deviceId) =>
-      previousViaApi(token, deviceId),
-    ),
+  await runViaWebApi("previous", (token, deviceId) =>
+    previousViaApi(token, deviceId),
   );
 }
 
 export async function seek(ms: number): Promise<void> {
-  if (innerPlayer) {
+  if (innerPlayer && (await sdkHasLoadedPlayback())) {
     const player = await ensurePlayer();
     await player.seek(ms);
     return;
   }
-  await withPlaybackToken((token) =>
-    runPlayerCommandWithDeviceRecovery(token, "seek", (deviceId) =>
-      seekViaApi(token, ms, deviceId),
-    ),
+  await runViaWebApi("seek", (token, deviceId) =>
+    seekViaApi(token, ms, deviceId),
   );
 }
 

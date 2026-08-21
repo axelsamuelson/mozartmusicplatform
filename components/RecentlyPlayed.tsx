@@ -18,8 +18,10 @@ import {
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import type { RecentTrack } from "@/lib/playback/recentTrack";
 import { loadLocalRecentlyPlayed } from "@/lib/playback/recentlyPlayedLocal";
+import { WAM_RATINGS_MUTATED } from "@/lib/wamRatingEvents";
 
 const CLIENT_FETCH_TIMEOUT_MS = 8_000;
+const SCORES_FETCH_TIMEOUT_MS = 5_000;
 
 function timeAgo(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -58,25 +60,47 @@ function mergeRecentTracks(
   );
 }
 
-async function attachScores(tracks: RecentTrack[]): Promise<RecentTrack[]> {
-  const missing = tracks.filter((t) => t.score == null).map((t) => t.spotifyId);
-  if (missing.length === 0) return tracks;
+function applyScores(
+  tracks: RecentTrack[],
+  scores: Record<string, number>,
+): RecentTrack[] {
+  if (!tracks.length) return tracks;
+  return tracks.map((t) => {
+    const fromMap = scores[t.spotifyId];
+    const score =
+      typeof fromMap === "number" && Number.isFinite(fromMap)
+        ? fromMap
+        : typeof t.score === "number" && Number.isFinite(t.score)
+          ? t.score
+          : null;
+    return score === t.score ? t : { ...t, score };
+  });
+}
+
+async function fetchScoresForIds(
+  ids: string[],
+): Promise<Record<string, number>> {
+  const unique = [...new Set(ids.filter(Boolean))].slice(0, 80);
+  if (unique.length === 0) return {};
   try {
     const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 4_000);
-    const res = await fetch("/api/ratings?scores_only=1", {
-      cache: "no-store",
-      signal: ac.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return tracks;
-    const body = (await res.json()) as { scores?: Record<string, number> };
-    const scores = body.scores ?? {};
-    return tracks.map((t) =>
-      t.score != null ? t : { ...t, score: scores[t.spotifyId] ?? null },
+    const timer = setTimeout(() => ac.abort(), SCORES_FETCH_TIMEOUT_MS);
+    const res = await fetch(
+      `/api/ratings?spotify_ids=${unique.map(encodeURIComponent).join(",")}`,
+      { cache: "no-store", signal: ac.signal },
     );
+    clearTimeout(timer);
+    if (!res.ok) return {};
+    const body = (await res.json()) as { scores?: Record<string, number> };
+    const raw = body.scores ?? {};
+    const scores: Record<string, number> = {};
+    for (const [id, value] of Object.entries(raw)) {
+      const n = Number(value);
+      if (Number.isFinite(n)) scores[id] = n;
+    }
+    return scores;
   } catch {
-    return tracks;
+    return {};
   }
 }
 
@@ -87,6 +111,16 @@ export function RecentlyPlayed() {
   const [needsReconnect, setNeedsReconnect] = useState(false);
   const [open, setOpen] = useState(false);
   const fetchGenRef = useRef(0);
+  const tracksRef = useRef<RecentTrack[]>([]);
+  tracksRef.current = tracks;
+
+  const refreshScores = useCallback(async (list: RecentTrack[]) => {
+    const scores = await fetchScoresForIds(list.map((t) => t.spotifyId));
+    if (Object.keys(scores).length === 0) return list;
+    const next = applyScores(list, scores);
+    setTracks(next);
+    return next;
+  }, []);
 
   const fetchTracks = useCallback(() => {
     const gen = ++fetchGenRef.current;
@@ -99,6 +133,11 @@ export function RecentlyPlayed() {
     );
     if (local.length > 0) {
       setTracks(local);
+      void fetchScoresForIds(local.map((t) => t.spotifyId)).then((scores) => {
+        if (gen !== fetchGenRef.current) return;
+        if (Object.keys(scores).length === 0) return;
+        setTracks((prev) => applyScores(prev, scores));
+      });
     }
 
     void (async () => {
@@ -118,7 +157,15 @@ export function RecentlyPlayed() {
         if (gen !== fetchGenRef.current) return;
 
         const remote = body.tracks ?? [];
-        const merged = await attachScores(mergeRecentTracks(local, remote));
+        let merged = mergeRecentTracks(local, remote);
+        // Prefer server scores, then fill any gaps via targeted lookup.
+        const missing = merged
+          .filter((t) => t.score == null)
+          .map((t) => t.spotifyId);
+        if (missing.length > 0) {
+          const scores = await fetchScoresForIds(missing);
+          merged = applyScores(merged, scores);
+        }
         if (gen !== fetchGenRef.current) return;
 
         setTracks(merged);
@@ -147,9 +194,10 @@ export function RecentlyPlayed() {
         }
       } catch (e) {
         if (gen !== fetchGenRef.current) return;
-        const merged = await attachScores(local);
-        setTracks(merged);
-        if (merged.length === 0) {
+        const scored = await refreshScores(local);
+        if (gen !== fetchGenRef.current) return;
+        setTracks(scored);
+        if (scored.length === 0) {
           const timedOut = e instanceof Error && e.name === "AbortError";
           setError(
             timedOut
@@ -162,11 +210,20 @@ export function RecentlyPlayed() {
         if (gen === fetchGenRef.current) setLoading(false);
       }
     })();
-  }, []);
+  }, [refreshScores]);
 
   useEffect(() => {
     if (open) fetchTracks();
   }, [open, fetchTracks]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onMutated = () => {
+      void refreshScores(tracksRef.current);
+    };
+    window.addEventListener(WAM_RATINGS_MUTATED, onMutated);
+    return () => window.removeEventListener(WAM_RATINGS_MUTATED, onMutated);
+  }, [open, refreshScores]);
 
   return (
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -276,24 +333,26 @@ export function RecentlyPlayed() {
                     ) : null}
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-white">
-                      {t.name}
-                    </p>
-                    <p className="truncate text-xs text-white/50">
-                      {t.artistName}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    {t.score != null ? (
-                      <span
-                        className={`rounded-full border px-2 py-0.5 text-xs font-semibold tabular-nums ${scoreBadgeClass(t.score)}`}
-                      >
-                        {t.score}
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="min-w-0 flex-1 truncate text-sm font-medium text-white">
+                        {t.name}
+                      </p>
+                      {t.score != null ? (
+                        <span
+                          className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] font-semibold tabular-nums ${scoreBadgeClass(t.score)}`}
+                        >
+                          {t.score}
+                        </span>
+                      ) : null}
+                    </div>
+                    <div className="flex min-w-0 items-center gap-2">
+                      <p className="min-w-0 flex-1 truncate text-xs text-white/50">
+                        {t.artistName}
+                      </p>
+                      <span className="shrink-0 text-[10px] text-white/30">
+                        {timeAgo(t.playedAt)}
                       </span>
-                    ) : null}
-                    <span className="text-xs text-white/30">
-                      {timeAgo(t.playedAt)}
-                    </span>
+                    </div>
                   </div>
                 </Link>
               </DropdownMenuItem>

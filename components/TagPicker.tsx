@@ -154,7 +154,7 @@ export function TagPicker({
   );
 
   return (
-    <div className={cn("flex flex-col", isDialog ? "gap-6" : "gap-8", className)}>
+    <div className={cn("flex flex-col", isDialog ? "gap-6" : "gap-5 md:gap-8", className)}>
       {showTempoIntensity ? (
         <TempoIntensitySlider
           tempo={tempo}
@@ -165,14 +165,14 @@ export function TagPicker({
         />
       ) : null}
 
-      <section className="flex flex-col gap-2">
+      <section className="flex flex-col gap-1.5 md:gap-2">
         <h3 className={isDialog ? "text-sm text-white/60" : sectionHeading}>Genre</h3>
         {!isDialog ? (
-          <p className="text-xs leading-relaxed text-white/55">
+          <p className="hidden text-xs leading-relaxed text-white/55 md:block">
             Pick any genres that fit (optional).
           </p>
         ) : null}
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2.5 md:gap-3">
           {popularGenres.length > 0 ? (
             <div className="flex flex-col gap-1.5">
               <p
@@ -218,10 +218,10 @@ export function TagPicker({
         </div>
       </section>
 
-      <section className="flex flex-col gap-4">
+      <section className="flex flex-col gap-3 md:gap-4">
         <h3 className={isDialog ? "text-sm text-white/60" : sectionHeading}>Moment</h3>
         {!isDialog ? (
-          <p className="text-xs leading-relaxed text-white/55">
+          <p className="hidden text-xs leading-relaxed text-white/55 md:block">
             Place, occasion, and activity — pick any that apply (optional).
           </p>
         ) : null}
