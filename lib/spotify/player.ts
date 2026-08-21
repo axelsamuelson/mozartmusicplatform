@@ -562,7 +562,12 @@ async function ensurePlayer(): Promise<SpotifyWebPlaybackPlayer> {
 export function disconnectPlayback(): void {
   connectGeneration++;
   abortPendingReady("Playback disconnected");
-  connectPromise = null;
+  // Avoid unhandled rejection when connect is aborted mid-flight (e.g. auth
+  // churn / Strict Mode remount) and nothing is left awaiting the promise.
+  if (connectPromise) {
+    void connectPromise.catch(() => {});
+    connectPromise = null;
+  }
   stateChangeListeners.clear();
 
   if (innerPlayer) {

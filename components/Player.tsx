@@ -659,6 +659,21 @@ export function Player() {
     await signInWithSpotifyClient();
   }, []);
 
+  // Must stay above any early return — conditional hooks crash the page (React #310).
+  const onSeek = useCallback(
+    (ms: number) => {
+      if (playback) {
+        applyPlayback({
+          ...playback,
+          progressMsAtSync: ms,
+          syncedAt: Date.now(),
+        });
+      }
+      runTransport(() => seek(ms));
+    },
+    [applyPlayback, playback, runTransport],
+  );
+
   if (!hasUser) return null;
 
   const artUrl = playback?.imageUrl ?? null;
@@ -684,20 +699,6 @@ export function Player() {
 
   const canShowRate = Boolean(
     nowTrackId && hasAnyTrack && nowPlayingIsRateableTrack,
-  );
-
-  const onSeek = useCallback(
-    (ms: number) => {
-      if (playback) {
-        applyPlayback({
-          ...playback,
-          progressMsAtSync: ms,
-          syncedAt: Date.now(),
-        });
-      }
-      runTransport(() => seek(ms));
-    },
-    [applyPlayback, playback, runTransport],
   );
 
   const onVolume = (vals: number[]) => {
