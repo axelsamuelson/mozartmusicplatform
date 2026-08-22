@@ -3,6 +3,7 @@ import { NextResponse, type NextRequest } from "next/server";
 
 import { devLiveApiAllowed } from "@/lib/dev/liveSimulateGate";
 import { ensureLiveTestUsers } from "@/lib/dev/ensureLiveTestUsers";
+import { linkTestUserSpotifyRefresh } from "@/lib/dev/linkTestUserSpotifyRefresh";
 import { defaultTestUserPassword } from "@/lib/dev/liveTestPersonas";
 
 /** Dev-only: establish a Supabase session cookie for automated smoke tests. */
@@ -17,10 +18,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "No test users" }, { status: 500 });
   }
 
+  const spotifyLink = await linkTestUserSpotifyRefresh(
+    testUser.userId,
+    testUser.email,
+  );
+
   let response = NextResponse.json({
     ok: true,
     email: testUser.email,
     userId: testUser.userId,
+    spotifyLinked: spotifyLink.linked,
+    spotifyLinkReason: spotifyLink.linked ? null : spotifyLink.reason,
   });
 
   const supabase = createServerClient(

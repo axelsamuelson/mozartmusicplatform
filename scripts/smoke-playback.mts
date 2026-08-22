@@ -22,7 +22,7 @@ export async function runPlaybackSmoke(): Promise<void> {
 
   if (res.status === 401 && body.error === "no_token") {
     console.log(
-      "[smoke:playback] no Spotify token for test user (expected) — API auth OK",
+      "[smoke:playback] no Spotify token — set WAM_TEST_SPOTIFY_REFRESH_TOKEN in .env.local and re-run login",
       { ms },
     );
     return;

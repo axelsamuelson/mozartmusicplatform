@@ -11,6 +11,7 @@
     "smoke": "tsx scripts/smoke-all.mts",
     "smoke:ratings": "tsx scripts/smoke-ratings.mts",
     "smoke:playback": "tsx scripts/smoke-playback.mts",
+    "link-test-spotify": "tsx scripts/link-test-spotify.mts",
     "test:e2e": "playwright test",
     "test:all": "npm test && npm run smoke && npm run test:e2e"
   },
