@@ -1,3 +1,5 @@
+import "./load-env-local.mts";
+
 import { SMOKE_BASE_URL, SMOKE_TRACK_ID } from "../lib/smoke/constants";
 
 export { SMOKE_BASE_URL, SMOKE_TRACK_ID };

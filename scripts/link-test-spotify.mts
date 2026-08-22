@@ -1,3 +1,5 @@
+import "./load-env-local.mts";
+
 import { ensureLiveTestUsers } from "@/lib/dev/ensureLiveTestUsers";
 import { linkTestUserSpotifyRefresh } from "@/lib/dev/linkTestUserSpotifyRefresh";
 
