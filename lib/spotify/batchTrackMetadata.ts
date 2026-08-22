@@ -3,6 +3,7 @@ import {
   beginSpotifyHalfOpenProbe,
   recordSpotify429,
   recordSpotifySuccess,
+  releaseSpotifyHalfOpenProbe,
 } from "@/lib/spotify/rateLimiter";
 
 export type TrackMetadata = {
@@ -51,7 +52,10 @@ export async function fetchTrackMetadataBatch(
       break;
     }
 
-    if (!res.ok) continue;
+    if (!res.ok) {
+      releaseSpotifyHalfOpenProbe();
+      continue;
+    }
 
     recordSpotifySuccess();
     const body = (await res.json()) as { tracks?: (SpotifyTrackJson | null)[] };

@@ -10,6 +10,7 @@ import {
   beginSpotifyHalfOpenProbe,
   recordSpotify429,
   recordSpotifySuccess,
+  releaseSpotifyHalfOpenProbe,
   withSpotifyUserThrottle,
 } from "@/lib/spotify/rateLimiter";
 
@@ -238,23 +239,28 @@ async function fetchCurrentPlaybackFromApi(
   userId?: string,
 ): Promise<SpotifyCurrentPlayback | null> {
   const run = async () => {
+    // Circuit probe is owned by cachedSpotifyRequest (or the bypass caller).
     assertSpotifyCircuitAvailable();
-    if (!beginSpotifyHalfOpenProbe()) {
-      throw new SpotifyApiError(503, "Spotify circuit open");
-    }
 
     const res = await fetch(ME_PLAYER, {
     headers: { Authorization: `Bearer ${accessToken}` },
     cache: "no-store",
   });
 
-  if (res.status === 204 || res.status === 202) return null;
-  if (res.status === 404) return null;
+  if (res.status === 204 || res.status === 202) {
+    recordSpotifySuccess();
+    return null;
+  }
+  if (res.status === 404) {
+    recordSpotifySuccess();
+    return null;
+  }
 
   if (!res.ok) {
     const t = await res.text();
-    if (res.status === 429) {
-      recordSpotify429();
+    // Circuit bookkeeping is owned by cachedSpotifyRequest / bypass caller.
+    if (res.status !== 429) {
+      releaseSpotifyHalfOpenProbe();
     }
     throw new SpotifyApiError(
       res.status,
@@ -343,10 +349,23 @@ export async function fetchCurrentPlayback(
   const userId = options?.userId?.trim();
   // Fresh transport polls must hit Spotify immediately — skip mem/DB cache and user throttle.
   if (!userId || options?.bypassCache) {
-    return fetchCurrentPlaybackFromApi(
-      accessToken,
-      options?.bypassCache ? undefined : userId,
-    );
+    assertSpotifyCircuitAvailable();
+    if (!beginSpotifyHalfOpenProbe()) {
+      throw new SpotifyApiError(503, "Spotify circuit open");
+    }
+    try {
+      return await fetchCurrentPlaybackFromApi(
+        accessToken,
+        options?.bypassCache ? undefined : userId,
+      );
+    } catch (e) {
+      if (e instanceof SpotifyApiError && e.status === 429) {
+        recordSpotify429();
+      } else {
+        releaseSpotifyHalfOpenProbe();
+      }
+      throw e;
+    }
   }
 
   const mem = memPlaybackByUser.get(userId);

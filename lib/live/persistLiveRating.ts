@@ -2,7 +2,9 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { syncWamPlaylistsForRating } from "@/lib/playlist/syncWamPlaylist";
 import { fetchRatingById } from "@/lib/ratings/normalize";
+import { replaceRatingTags } from "@/lib/ratings/replaceRatingTags";
 import type { LiveSessionRow } from "@/lib/types/live";
+import type { RatingDetail } from "@/lib/types/ratings";
 
 export type PersistLiveRatingInput = {
   score: number;
@@ -20,7 +22,10 @@ export async function persistLiveRatingToLibrary(
   userId: string,
   session: LiveSessionRow,
   input: PersistLiveRatingInput,
-  options?: { previousScore?: number },
+  options?: {
+    previousScore?: number;
+    previousRating?: RatingDetail | null;
+  },
 ): Promise<void> {
   const spotifyId = session.spotify_track_id;
   if (!spotifyId) return;
@@ -47,7 +52,11 @@ export async function persistLiveRatingToLibrary(
     .eq("spotify_id", spotifyId)
     .maybeSingle();
 
-  const previousScore = options?.previousScore ?? existing?.score;
+  const previousRating =
+    options?.previousRating ??
+    (existing?.id
+      ? await fetchRatingById(supabase, existing.id as string)
+      : null);
 
   let ratingId: string;
   if (existing?.id) {
@@ -78,24 +87,21 @@ export async function persistLiveRatingToLibrary(
     ratingId = inserted.id as string;
   }
 
-  await supabase.from("rating_genres").delete().eq("rating_id", ratingId);
-  if (input.genre_ids.length) {
-    await supabase.from("rating_genres").insert(
-      input.genre_ids.map((genre_tag_id) => ({ rating_id: ratingId, genre_tag_id })),
-    );
-  }
-
-  await supabase.from("rating_moments").delete().eq("rating_id", ratingId);
-  if (input.moment_ids.length) {
-    await supabase.from("rating_moments").insert(
-      input.moment_ids.map((moment_tag_id) => ({ rating_id: ratingId, moment_tag_id })),
-    );
+  const tags = await replaceRatingTags(
+    supabase,
+    ratingId,
+    input.genre_ids,
+    input.moment_ids,
+  );
+  if (tags.error) {
+    throw new Error(tags.error);
   }
 
   const full = await fetchRatingById(supabase, ratingId);
   if (full) {
     await syncWamPlaylistsForRating(supabase, userId, full, {
-      previousScore,
+      previousRating,
+      previousScore: options?.previousScore,
     });
   }
 }

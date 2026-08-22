@@ -38,7 +38,7 @@ export interface TagPickerProps {
   onMomentsChange: (ids: number[]) => void;
   tempo: number | null;
   intensity: number | null;
-  onTempoIntensityChange: (tempo: number, intensity: number) => void;
+  onTempoIntensityChange: (tempo: number | null, intensity: number | null) => void;
   disabled?: boolean;
   className?: string;
   visualVariant?: "default" | "dialog";

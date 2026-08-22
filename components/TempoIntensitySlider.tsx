@@ -15,7 +15,7 @@ import { cn } from "@/lib/utils";
 export interface TempoIntensitySliderProps {
   tempo: number | null;
   intensity: number | null;
-  onChange: (tempo: number, intensity: number) => void;
+  onChange: (tempo: number | null, intensity: number | null) => void;
   disabled?: boolean;
   variant?: "default" | "dialog" | "compact";
 }
@@ -100,11 +100,12 @@ export function TempoIntensitySlider({
   );
 
   function setTempo(next: number) {
-    onChange(next, intensityVal);
+    // Don't coerce the other axis from null → display fallback (5).
+    onChange(next, intensity);
   }
 
   function setIntensity(next: number) {
-    onChange(tempoVal, next);
+    onChange(tempo, next);
   }
 
   return (

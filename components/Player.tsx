@@ -48,6 +48,7 @@ import { buildClientAuditSnapshot } from "@/lib/audit/useAuditCollector";
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import { createClient } from "@/lib/supabase/client";
 import { emptyPlayback, sdkStateToPlayback } from "@/lib/playback/mappers";
+import { getCurrentProgressMs } from "@/lib/playback/progress";
 import { playlistIdFromContextUri } from "@/lib/spotify/currentlyPlaying";
 import {
   spotifyPlaylistRankHref,
@@ -62,6 +63,7 @@ import {
   disconnectPlayback,
   getCurrentState,
   getPlaybackVolume,
+  isBrowserPlayerUnavailable,
   isPlaybackDeviceReady,
   next,
   pause,
@@ -375,6 +377,15 @@ export function Player() {
         }
       } catch (e) {
         if (e instanceof Error && e.message === "Playback disconnected") return;
+        if (isBrowserPlayerUnavailable(e)) {
+          // Soft failure: keep controlling phone/desktop via Web API.
+          setPlaybackReady(false);
+          setConnectError(e.message);
+          if (!isSpotifyCircuitOpen()) {
+            void fetchApiPlayback();
+          }
+          return;
+        }
         setPlaybackReady(false);
         setConnectError(
           e instanceof Error ? e.message : "Playback unavailable",
@@ -500,8 +511,10 @@ export function Player() {
           return;
         }
         if (!res.ok) {
-          ratingByTrackIdRef.current.set(trackIdForFetch, null);
-          setCurrentTrackRating(null);
+          // Keep any known badge — don't wipe on transient API errors.
+          setCurrentTrackRating(
+            ratingByTrackIdRef.current.get(trackIdForFetch) ?? null,
+          );
           return;
         }
         const next = body.rating ?? null;
@@ -628,9 +641,11 @@ export function Player() {
 
   const onTogglePlayPause = useCallback(() => {
     if (playback) {
+      const progressMsAtSync = getCurrentProgressMs(playback);
       applyPlayback({
         ...playback,
         isPlaying: paused,
+        progressMsAtSync,
         syncedAt: Date.now(),
       });
     }
@@ -997,11 +1012,13 @@ export function Player() {
           displayTitle={hasAnyTrack ? trackTitle : ""}
           displayArtist={hasAnyTrack ? artistLine : ""}
           displayImageUrl={artUrl}
-          onRatingUpdated={(r) => {
+          onRatingUpdated={(r, forId) => {
             ratingMutationGenRef.current += 1;
+            const id = r?.spotify_id ?? forId;
+            if (!id) return;
             if (r == null) {
-              if (nowTrackId) ratingByTrackIdRef.current.set(nowTrackId, null);
-              if (ratingTrackIdRef.current === nowTrackId) {
+              ratingByTrackIdRef.current.set(id, null);
+              if (ratingTrackIdRef.current === id) {
                 setCurrentTrackRating(null);
               }
               return;

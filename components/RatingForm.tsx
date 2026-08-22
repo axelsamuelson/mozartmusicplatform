@@ -26,6 +26,13 @@ export interface RatingFormProps {
   onDeleted?: () => void;
   className?: string;
   presentation?: "page" | "dialog";
+  /** Used to upsert cached_items when saving without a prior cache row. */
+  itemMeta?: {
+    type: "track" | "album" | "artist";
+    name: string;
+    artist_name?: string | null;
+    image_url?: string | null;
+  };
 }
 
 function stateFromRating(r: RatingDetail | null) {
@@ -48,6 +55,7 @@ export function RatingForm({
   onDeleted,
   className,
   presentation = "page",
+  itemMeta,
 }: RatingFormProps) {
   const isDialog = presentation === "dialog";
   const [score, setScore] = useState(50);
@@ -74,19 +82,33 @@ export function RatingForm({
 
     setSaving(true);
     try {
-      const res = await fetchWithRetry("/api/ratings", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spotify_id: spotifyId,
-          score,
-          comment: comment.trim() || null,
-          genre_ids: genreIds,
-          tempo,
-          intensity,
-          moment_ids: momentIds,
-        }),
-      });
+      const res = await fetchWithRetry(
+        "/api/ratings?lite=1",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spotify_id: spotifyId,
+            score,
+            comment: comment.trim() || null,
+            genre_ids: genreIds,
+            tempo,
+            intensity,
+            moment_ids: momentIds,
+            ...(itemMeta
+              ? {
+                  item: {
+                    type: itemMeta.type,
+                    name: itemMeta.name,
+                    artist_name: itemMeta.artist_name ?? null,
+                    image_url: itemMeta.image_url ?? null,
+                  },
+                }
+              : {}),
+          }),
+        },
+        { timeoutMs: 15_000, retries: 1, delaysMs: [400] },
+      );
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
         rating?: RatingDetail;

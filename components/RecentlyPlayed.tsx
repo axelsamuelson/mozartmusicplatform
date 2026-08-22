@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { signInWithSpotifyClient } from "@/lib/auth/signInWithSpotifyClient";
 import type { RecentTrack } from "@/lib/playback/recentTrack";
+import { applyRecentTrackScores } from "@/lib/playback/applyRecentTrackScores";
 import { loadLocalRecentlyPlayed } from "@/lib/playback/recentlyPlayedLocal";
 import { WAM_RATINGS_MUTATED } from "@/lib/wamRatingEvents";
 
@@ -63,18 +64,9 @@ function mergeRecentTracks(
 function applyScores(
   tracks: RecentTrack[],
   scores: Record<string, number>,
+  authoritativeIds?: string[],
 ): RecentTrack[] {
-  if (!tracks.length) return tracks;
-  return tracks.map((t) => {
-    const fromMap = scores[t.spotifyId];
-    const score =
-      typeof fromMap === "number" && Number.isFinite(fromMap)
-        ? fromMap
-        : typeof t.score === "number" && Number.isFinite(t.score)
-          ? t.score
-          : null;
-    return score === t.score ? t : { ...t, score };
-  });
+  return applyRecentTrackScores(tracks, scores, authoritativeIds);
 }
 
 async function fetchScoresForIds(
@@ -115,9 +107,9 @@ export function RecentlyPlayed() {
   tracksRef.current = tracks;
 
   const refreshScores = useCallback(async (list: RecentTrack[]) => {
-    const scores = await fetchScoresForIds(list.map((t) => t.spotifyId));
-    if (Object.keys(scores).length === 0) return list;
-    const next = applyScores(list, scores);
+    const ids = list.map((t) => t.spotifyId);
+    const scores = await fetchScoresForIds(ids);
+    const next = applyScores(list, scores, ids);
     setTracks(next);
     return next;
   }, []);
@@ -135,8 +127,8 @@ export function RecentlyPlayed() {
       setTracks(local);
       void fetchScoresForIds(local.map((t) => t.spotifyId)).then((scores) => {
         if (gen !== fetchGenRef.current) return;
-        if (Object.keys(scores).length === 0) return;
-        setTracks((prev) => applyScores(prev, scores));
+        const ids = local.map((t) => t.spotifyId);
+        setTracks((prev) => applyScores(prev, scores, ids));
       });
     }
 
@@ -164,7 +156,7 @@ export function RecentlyPlayed() {
           .map((t) => t.spotifyId);
         if (missing.length > 0) {
           const scores = await fetchScoresForIds(missing);
-          merged = applyScores(merged, scores);
+          merged = applyScores(merged, scores, missing);
         }
         if (gen !== fetchGenRef.current) return;
 

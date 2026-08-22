@@ -87,6 +87,7 @@ function fallbackPlayback(userId: string): NextResponse {
     getDedupedPlayback(userId) ??
     getLastKnownPlayback(userId) ?? { isPlaying: false };
   const circuit = getSpotifyCircuitState();
+  // Dedup already advances progress; last-known may be older — stamp fresh serverTime only.
   return NextResponse.json(withServerTime(last), {
     headers: {
       "Cache-Control": CACHE_NO_STORE,

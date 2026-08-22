@@ -113,9 +113,24 @@ let pendingReadyReject: ((err: Error) => void) | null = null;
 type StateChangeListener = (state: SpotifyWebPlaybackState | null) => void;
 const stateChangeListeners = new Set<StateChangeListener>();
 
-const READY_TIMEOUT_MS = 45_000;
+const READY_TIMEOUT_MS = 18_000;
 const MAX_CONNECT_ATTEMPTS = 3;
-const CONNECT_RETRY_DELAY_MS = 1_500;
+const CONNECT_RETRY_DELAY_MS = 1_200;
+
+/** Soft failure — browser SDK unavailable; API / phone playback still works. */
+export class BrowserPlayerUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "BrowserPlayerUnavailableError";
+  }
+}
+
+export function isBrowserPlayerUnavailable(
+  error: unknown,
+): error is BrowserPlayerUnavailableError {
+  return error instanceof BrowserPlayerUnavailableError;
+}
+
 
 export function registerStateChangeListener(listener: StateChangeListener): () => void {
   stateChangeListeners.add(listener);
@@ -153,18 +168,20 @@ export function unregisterPlaybackTokenProvider(): void {
 }
 
 function abortPendingReady(reason: string): void {
-  pendingReadyReject?.(new Error(reason));
+  pendingReadyReject?.(new BrowserPlayerUnavailableError(reason));
   pendingReadyReject = null;
 }
 
 function isConnectRetryableError(err: unknown): boolean {
+  if (err instanceof BrowserPlayerUnavailableError) return true;
   if (!(err instanceof Error)) return false;
   const msg = err.message;
   return (
     msg.includes("did not start in time") ||
     msg.includes("would not connect") ||
     msg.includes("Playback disconnected") ||
-    msg.includes("failed to start")
+    msg.includes("failed to start") ||
+    msg.includes("SDK load timeout")
   );
 }
 
@@ -182,6 +199,11 @@ function loadSdk(): Promise<void> {
   if (sdkPromise) return sdkPromise;
 
   sdkPromise = new Promise((resolve, reject) => {
+    const fail = (err: Error) => {
+      sdkPromise = null;
+      reject(err);
+    };
+
     const existing = document.querySelector(
       'script[src="https://sdk.scdn.co/spotify-player.js"]',
     );
@@ -193,7 +215,7 @@ function loadSdk(): Promise<void> {
           resolve();
         } else if (Date.now() - t0 > 15000) {
           window.clearInterval(iv);
-          reject(new Error("Spotify SDK load timeout"));
+          fail(new Error("Spotify SDK load timeout"));
         }
       }, 50);
       return;
@@ -209,7 +231,7 @@ function loadSdk(): Promise<void> {
     script.src = "https://sdk.scdn.co/spotify-player.js";
     script.async = true;
     script.onerror = () => {
-      reject(new Error("Failed to load Spotify Web Playback SDK"));
+      fail(new Error("Failed to load Spotify Web Playback SDK"));
     };
     document.body.appendChild(script);
   });
@@ -384,27 +406,48 @@ async function connectWebPlaybackPlayer(
   if (!window.Spotify) return null;
   if (generation !== connectGeneration) return null;
 
+  // Warm the token cache so SDK getOAuthToken can respond immediately.
+  let primedToken: string;
   try {
-    await getTokenString();
+    primedToken = await getTokenString();
   } catch (e) {
     const msg = e instanceof Error ? e.message : "No Spotify access token";
-    throw new Error(
+    throw new BrowserPlayerUnavailableError(
       msg.includes("sign in")
         ? msg
         : `${msg}. Sign out and sign in with Spotify again.`,
     );
   }
+  if (generation !== connectGeneration) return null;
+
+  let settled = false;
+  let timeoutId = 0;
+  const readyGate: { fail: ((err: Error) => void) | null } = { fail: null };
 
   const player = new window.Spotify.Player({
     name: "WAM Player",
     getOAuthToken: (cb) => {
+      if (primedToken) {
+        cb(primedToken);
+        void getTokenString()
+          .then((token) => {
+            primedToken = token;
+          })
+          .catch(() => {});
+        return;
+      }
       void getTokenString()
-        .then((token) => cb(token))
+        .then((token) => {
+          primedToken = token;
+          cb(token);
+        })
         .catch((err) => {
           const msg = err instanceof Error ? err.message : "Token error";
           console.error("[WAM Player] token", msg);
-          abortPendingReady(
-            "Could not refresh Spotify token. Sign in again with Spotify.",
+          readyGate.fail?.(
+            new BrowserPlayerUnavailableError(
+              "Could not refresh Spotify token. Sign in again with Spotify.",
+            ),
           );
         });
     },
@@ -413,8 +456,11 @@ async function connectWebPlaybackPlayer(
 
   const readyDeviceId = new Promise<string>((resolve, reject) => {
     const fail = (err: Error) => {
+      if (settled) return;
+      settled = true;
       window.clearTimeout(timeoutId);
       pendingReadyReject = null;
+      readyGate.fail = null;
       try {
         player.disconnect();
       } catch {
@@ -422,13 +468,12 @@ async function connectWebPlaybackPlayer(
       }
       reject(err);
     };
-
+    readyGate.fail = fail;
     pendingReadyReject = fail;
 
-    const timeoutId = window.setTimeout(() => {
-      pendingReadyReject = null;
+    timeoutId = window.setTimeout(() => {
       fail(
-        new Error(
+        new BrowserPlayerUnavailableError(
           "In-browser Spotify player did not start in time. Close other WAM tabs, refresh, or control playback on your phone/desktop Spotify app.",
         ),
       );
@@ -436,40 +481,44 @@ async function connectWebPlaybackPlayer(
 
     player.addListener("ready", ({ device_id }) => {
       if (generation !== connectGeneration) {
-        fail(new Error("Playback disconnected"));
+        fail(new BrowserPlayerUnavailableError("Playback disconnected"));
         return;
       }
+      if (settled) return;
+      settled = true;
       window.clearTimeout(timeoutId);
       pendingReadyReject = null;
+      readyGate.fail = null;
       if (device_id) {
         playbackDeviceId = device_id;
         resolve(device_id);
       } else {
-        fail(new Error("Spotify player ready without device id"));
+        fail(new BrowserPlayerUnavailableError("Spotify player ready without device id"));
       }
     });
 
     player.addListener("initialization_error", ({ message }) => {
       console.error("[WAM Player] init", message);
-      fail(new Error(friendlySdkError("initialization", message)));
+      fail(new BrowserPlayerUnavailableError(friendlySdkError("initialization", message)));
     });
     player.addListener("authentication_error", ({ message }) => {
       console.error("[WAM Player] auth", message);
-      fail(new Error(friendlySdkError("authentication", message)));
+      fail(new BrowserPlayerUnavailableError(friendlySdkError("authentication", message)));
     });
     player.addListener("account_error", ({ message }) => {
       console.error("[WAM Player] account", message);
-      fail(new Error(friendlySdkError("account", message)));
+      fail(new BrowserPlayerUnavailableError(friendlySdkError("account", message)));
     });
   });
+
+  // If connect is aborted / we return early, never leave an unhandled rejection.
+  void readyDeviceId.catch(() => {});
 
   player.addListener("not_ready", () => {
     playbackDeviceId = null;
   });
 
   player.addListener("playback_error", ({ message }) => {
-    // Browser SDK fires this when transport runs without a loaded context
-    // (e.g. user is playing on phone while this tab’s player is idle).
     const msg = typeof message === "string" ? message : "";
     if (/no list was loaded/i.test(msg)) return;
     console.error("[WAM Player] playback", message);
@@ -488,6 +537,7 @@ async function connectWebPlaybackPlayer(
 
   const connected = await player.connect();
   if (generation !== connectGeneration) {
+    readyGate.fail?.(new BrowserPlayerUnavailableError("Playback disconnected"));
     try {
       player.disconnect();
     } catch {
@@ -496,12 +546,17 @@ async function connectWebPlaybackPlayer(
     return null;
   }
   if (!connected) {
+    readyGate.fail?.(
+      new BrowserPlayerUnavailableError(
+        "Spotify would not connect this browser tab. Close other WAM tabs and try again.",
+      ),
+    );
     try {
       player.disconnect();
     } catch {
       /* ignore */
     }
-    throw new Error(
+    throw new BrowserPlayerUnavailableError(
       "Spotify would not connect this browser tab. Close other WAM tabs and try again.",
     );
   }
@@ -514,7 +569,11 @@ async function ensurePlayer(): Promise<SpotifyWebPlaybackPlayer> {
   if (innerPlayer) return innerPlayer;
   if (connectPromise) {
     const p = await connectPromise;
-    if (!p) throw new Error("Spotify player failed to connect");
+    if (!p) {
+      throw new BrowserPlayerUnavailableError(
+        "Could not connect the in-browser Spotify player. Playback on your other devices still works.",
+      );
+    }
     return p;
   }
 
@@ -538,22 +597,30 @@ async function ensurePlayer(): Promise<SpotifyWebPlaybackPlayer> {
           attempt >= MAX_CONNECT_ATTEMPTS - 1 ||
           !isConnectRetryableError(e)
         ) {
-          throw e;
+          throw e instanceof BrowserPlayerUnavailableError
+            ? e
+            : new BrowserPlayerUnavailableError(
+                e instanceof Error ? e.message : "Spotify player failed to connect",
+              );
         }
         await new Promise((r) =>
           window.setTimeout(r, CONNECT_RETRY_DELAY_MS * (attempt + 1)),
         );
       }
     }
-    throw lastError instanceof Error
+    throw lastError instanceof BrowserPlayerUnavailableError
       ? lastError
-      : new Error("Spotify player failed to connect");
+      : new BrowserPlayerUnavailableError(
+          lastError instanceof Error
+            ? lastError.message
+            : "Spotify player failed to connect",
+        );
   })();
 
   try {
     const p = await connectPromise;
     if (!p) {
-      throw new Error(
+      throw new BrowserPlayerUnavailableError(
         "Could not connect the in-browser Spotify player. Playback on your other devices still works.",
       );
     }
@@ -805,9 +872,36 @@ function parseSpotifyUri(uri: string): { kind: "track" | "context"; uri: string 
 }
 
 export async function play(spotifyUri: string): Promise<void> {
-  const player = await ensurePlayer();
-  await player.activateElement();
-  await startPlaybackViaWebApi(spotifyUri);
+  try {
+    const player = await ensurePlayer();
+    await player.activateElement();
+    await startPlaybackViaWebApi(spotifyUri);
+    return;
+  } catch (e) {
+    if (!isBrowserPlayerUnavailable(e)) throw e;
+  }
+
+  // Browser SDK unavailable — play on an existing Spotify speaker instead.
+  await withPlaybackToken((token) =>
+    runPlayerCommandWithDeviceRecovery(token, "play", async (deviceId) => {
+      const { kind, uri } = parseSpotifyUri(spotifyUri);
+      const body =
+        kind === "track"
+          ? JSON.stringify({ uris: [uri] })
+          : JSON.stringify({ context_uri: uri });
+      const url = new URL("https://api.spotify.com/v1/me/player/play");
+      if (deviceId) url.searchParams.set("device_id", deviceId);
+      await playerCommandRequest("play", url.toString(), {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body,
+        cache: "no-store",
+      });
+    }),
+  );
 }
 
 export function peekSdkQueuedTrack(
@@ -825,10 +919,11 @@ export function peekSdkQueuedTrack(
 /** True when this tab’s Web Playback SDK actually has a track/context loaded. */
 async function sdkHasLoadedPlayback(): Promise<boolean> {
   if (!innerPlayer) return false;
-  if (lastSdkState?.track_window?.current_track?.id) return true;
   try {
     const state = await innerPlayer.getCurrentState();
-    return Boolean(state?.track_window?.current_track?.id);
+    const live = Boolean(state?.track_window?.current_track?.id);
+    if (state) lastSdkState = state;
+    return live;
   } catch {
     return false;
   }

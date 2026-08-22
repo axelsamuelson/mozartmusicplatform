@@ -6,6 +6,7 @@ import {
   beginSpotifyHalfOpenProbe,
   recordSpotify429,
   recordSpotifySuccess,
+  releaseSpotifyHalfOpenProbe,
 } from "@/lib/spotify/rateLimiter";
 
 const ME_PLAYER_QUEUE = "https://api.spotify.com/v1/me/player/queue";
@@ -72,10 +73,17 @@ export async function fetchSpotifyPlayerQueue(
     cache: "no-store",
   });
 
-  if (res.status === 204 || res.status === 404) return [];
+  if (res.status === 204 || res.status === 404) {
+    recordSpotifySuccess();
+    return [];
+  }
   if (!res.ok) {
     const t = await res.text();
-    if (res.status === 429) recordSpotify429();
+    if (res.status === 429) {
+      recordSpotify429();
+    } else {
+      releaseSpotifyHalfOpenProbe();
+    }
     throw new SpotifyApiError(
       res.status,
       t,

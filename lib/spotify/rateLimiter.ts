@@ -56,6 +56,13 @@ export function beginSpotifyHalfOpenProbe(): boolean {
   return true;
 }
 
+/** Clear a half-open probe lock without re-opening (non-429 failures). */
+export function releaseSpotifyHalfOpenProbe(): void {
+  if (getSpotifyCircuitState() === "half_open") {
+    halfOpenProbeInFlight = false;
+  }
+}
+
 export function recordSpotify429(): void {
   const now = Date.now();
   prune429Window(now);
@@ -85,6 +92,14 @@ export function recordSpotifySuccess(): void {
   }
 }
 
+/** Reset in-memory breaker state (unit tests only). */
+export function resetSpotifyCircuitForTests(): void {
+  state = "closed";
+  openedAt = 0;
+  recent429Timestamps.length = 0;
+  halfOpenProbeInFlight = false;
+}
+
 export const SPOTIFY_CIRCUIT_UNAVAILABLE_MSG =
   "Spotify temporarily unavailable — try again in a few minutes";
 
@@ -100,10 +115,9 @@ export function assertSpotifyCircuitAvailable(): void {
 export function isSpotify429Error(error: unknown): boolean {
   if (error instanceof SpotifyHttpError) return error.status === 429;
   if (error instanceof SpotifyApiError) {
-    if (error.status === 429) return true;
-    if (error.status === 503) return /circuit/i.test(error.message);
+    return error.status === 429;
   }
-  if (error instanceof Error && /Spotify API 429|circuit/i.test(error.message)) {
+  if (error instanceof Error && /Spotify API 429/i.test(error.message)) {
     return true;
   }
   return false;

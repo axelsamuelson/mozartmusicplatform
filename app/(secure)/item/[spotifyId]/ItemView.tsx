@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Play } from "lucide-react";
@@ -78,6 +78,18 @@ export function ItemView() {
   const [playing, setPlaying] = useState(false);
   const [playlistRefresh, setPlaylistRefresh] = useState(0);
   const [platformRank, setPlatformRank] = useState<TrackRank | null>(null);
+  const spotifyIdRef = useRef(spotifyId);
+  const historyFetchRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    spotifyIdRef.current = spotifyId;
+  }, [spotifyId]);
+
+  useEffect(() => {
+    historyFetchRef.current?.abort();
+    historyFetchRef.current = null;
+    return () => historyFetchRef.current?.abort();
+  }, [spotifyId]);
 
   useEffect(() => {
     if (typeRaw === "artist") {
@@ -169,17 +181,33 @@ export function ItemView() {
       setRating(r);
       setPlaylistRefresh((n) => n + 1);
       if (history) {
-        setScoreHistory(history);
+        historyFetchRef.current?.abort();
+        historyFetchRef.current = null;
+        if (r.spotify_id === spotifyIdRef.current) {
+          setScoreHistory(history);
+        }
         return;
       }
-      void fetch(`/api/ratings?spotify_id=${encodeURIComponent(r.spotify_id)}`)
+
+      historyFetchRef.current?.abort();
+      const ac = new AbortController();
+      historyFetchRef.current = ac;
+      const forId = r.spotify_id;
+
+      void fetch(`/api/ratings?spotify_id=${encodeURIComponent(forId)}`, {
+        signal: ac.signal,
+        cache: "no-store",
+      })
         .then(async (res) => {
           const body = (await res.json().catch(() => ({}))) as {
             score_history?: ScoreHistoryEntry[];
           };
+          if (ac.signal.aborted || spotifyIdRef.current !== forId) return;
           if (res.ok) setScoreHistory(body.score_history ?? []);
         })
-        .catch(() => {});
+        .catch((e: unknown) => {
+          if (e instanceof Error && e.name === "AbortError") return;
+        });
     },
     [],
   );
@@ -312,6 +340,12 @@ export function ItemView() {
                 initialRating={rating}
                 onSaved={handleSaved}
                 onDeleted={handleDeleted}
+                itemMeta={{
+                  type: item.type,
+                  name: item.name,
+                  artist_name: item.artist_name,
+                  image_url: item.image_url,
+                }}
               />
             )}
           </section>

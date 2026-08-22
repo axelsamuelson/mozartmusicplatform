@@ -41,8 +41,8 @@ export async function seedLiveTestRatings(
       spotify_track_id: trackId,
       display_name: t.displayName,
       score,
-      tempo: 50 + (i % 5) * 10,
-      intensity: 40 + (i % 4) * 15,
+      tempo: (i % 10) + 1,
+      intensity: ((i + 2) % 10) + 1,
       genre_ids: [],
       comment: null,
     });

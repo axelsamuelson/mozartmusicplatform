@@ -102,7 +102,6 @@ export function useUnifiedPlayback(options: {
   const trackStartedAtRef = useRef(0);
   const skipIgnoreIdsRef = useRef<Set<string>>(new Set());
   const skipIgnoreUntilRef = useRef(0);
-  const pendingSkipCountRef = useRef(0);
   const forceFetchGenRef = useRef(0);
   const forceFetchAbortRef = useRef<AbortController | null>(null);
 
@@ -136,7 +135,6 @@ export function useUnifiedPlayback(options: {
   const clearSkipTransition = useCallback(() => {
     skipIgnoreIdsRef.current.clear();
     skipIgnoreUntilRef.current = 0;
-    pendingSkipCountRef.current = 0;
   }, []);
 
   const applyPlayback = useCallback(
@@ -181,13 +179,10 @@ export function useUnifiedPlayback(options: {
         skipIgnoreIdsRef.current.add(current.trackId);
       }
       skipIgnoreUntilRef.current = Date.now() + SKIP_STALE_MS;
-      const index = pendingSkipCountRef.current;
-      pendingSkipCountRef.current += 1;
 
-      // Only paint the next track when we actually know it (SDK queue).
-      // On iPhone/API we keep showing the current track until a verified new id arrives —
-      // faking a progress reset on the same song feels broken.
-      const queued = peekSdkQueuedTrack(direction, index);
+      // Only paint the immediate next/previous when we know it (SDK queue).
+      // Don't peek ahead — rapid clicks would invent tracks Spotify hasn't reached.
+      const queued = peekSdkQueuedTrack(direction, 0);
       if (queued && current) {
         applyPlayback(playbackFromSdkTrack(queued, { ...current, isPlaying: true }));
       }
@@ -318,6 +313,11 @@ export function useUnifiedPlayback(options: {
 
       if (isSdkPrimary(playbackRef.current) && next.source === "api") {
         const sdkId = playbackRef.current?.trackId;
+        // Don't let a transient empty API poll wipe an active SDK session.
+        if (!next.trackId) {
+          scheduleApiFetch(playbackRef.current);
+          return;
+        }
         if (sdkId && next.trackId && sdkId === next.trackId) {
           scheduleApiFetch(playbackRef.current);
           return;
@@ -413,27 +413,21 @@ export function useUnifiedPlayback(options: {
       if (!remote.syncedAt) return;
       const local = playbackRef.current;
       if (local && local.syncedAt >= remote.syncedAt) return;
-      playbackRef.current = remote;
-      setPlayback(remote);
-      setDisplayProgressMs(getCurrentProgressMs(remote));
-      if (remote.trackId !== prevTrackIdRef.current) {
-        prevTrackIdRef.current = remote.trackId;
-        notifyTrackChanged();
-      }
+      // Route through applyPlayback so skip-stale guards still apply.
+      applyPlayback(remote, { broadcast: false });
       if (remote.source === "api" && isLeaderRef.current) {
         scheduleApiFetch(remote);
       }
     });
-  }, [enabled, notifyTrackChanged, scheduleApiFetch]);
+  }, [applyPlayback, enabled, scheduleApiFetch]);
 
   // SDK events
   useEffect(() => {
     if (!playbackReady) return;
     return registerStateChangeListener((state) => {
       if (!state?.track_window?.current_track) {
-        if (!isSdkPrimary(playbackRef.current)) {
-          void fetchApiPlayback();
-        }
+        // Always re-check API — local state may still look "SDK primary".
+        void fetchApiPlayback(true);
         return;
       }
       applySdkState(state);

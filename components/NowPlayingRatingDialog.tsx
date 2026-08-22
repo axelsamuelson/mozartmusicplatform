@@ -53,7 +53,7 @@ export type NowPlayingRatingDialogProps = {
   displayTitle: string;
   displayArtist: string;
   displayImageUrl: string | null;
-  onRatingUpdated: (rating: RatingDetail | null) => void;
+  onRatingUpdated: (rating: RatingDetail | null, forSpotifyId?: string) => void;
 };
 
 export function NowPlayingRatingDialog({
@@ -161,6 +161,7 @@ export function NowPlayingRatingDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (loadingRating) return;
     const savedForId = spotifyId;
     const previousRating = rating;
     const optimistic: RatingDetail = {
@@ -181,34 +182,37 @@ export function NowPlayingRatingDialog({
     onRatingUpdated(optimistic);
     onOpenChange(false);
     try {
-      const res = await fetchWithRetry("/api/ratings?lite=1", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          spotify_id: savedForId,
-          score,
-          comment: comment.trim() || null,
-          tempo,
-          intensity,
-          genre_ids: genreIds,
-          moment_ids: momentIds,
-          item: {
-            type: itemType,
-            name: title,
-            artist_name: artist || null,
-            image_url: cover,
-          },
-        }),
-      });
+      const res = await fetchWithRetry(
+        "/api/ratings?lite=1",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            spotify_id: savedForId,
+            score,
+            comment: comment.trim() || null,
+            tempo,
+            intensity,
+            genre_ids: genreIds,
+            moment_ids: momentIds,
+            item: {
+              type: itemType,
+              name: title,
+              artist_name: artist || null,
+              image_url: cover,
+            },
+          }),
+        },
+        { timeoutMs: 15_000, retries: 1, delaysMs: [400] },
+      );
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
         rating?: RatingDetail;
       };
       if (!res.ok || !body.rating) {
-        if (savedForId === spotifyId) {
-          onRatingUpdated(previousRating);
-          onOpenChange(true);
-        }
+        // Always revert the track we attempted — even if UI moved on.
+        onRatingUpdated(previousRating, savedForId);
+        if (savedForId === spotifyId) onOpenChange(true);
         toast.error(body.error || "Could not save rating");
         return;
       }
@@ -217,10 +221,8 @@ export function NowPlayingRatingDialog({
       dispatchRatingsMutated();
       toast.success("Rating saved");
     } catch (e) {
-      if (savedForId === spotifyId) {
-        onRatingUpdated(previousRating);
-        onOpenChange(true);
-      }
+      onRatingUpdated(previousRating, savedForId);
+      if (savedForId === spotifyId) onOpenChange(true);
       toast.error(userFacingFetchError(e, "Could not save rating. Try again."));
     } finally {
       setSaving(false);
@@ -242,7 +244,7 @@ export function NowPlayingRatingDialog({
       }
       toast.success("Rating deleted");
       setRating(null);
-      onRatingUpdated(null);
+      onRatingUpdated(null, spotifyId);
       dispatchRatingsMutated();
       onOpenChange(false);
     } finally {
@@ -419,10 +421,10 @@ export function NowPlayingRatingDialog({
                   ) : null}
                   <button
                     type="submit"
-                    disabled={saving || deleting}
+                    disabled={saving || deleting || loadingRating}
                     className="rounded-full bg-wam px-6 py-2 text-sm font-semibold text-black transition-colors hover:bg-wam/90 disabled:opacity-50"
                   >
-                    {saving ? "Saving…" : "Save"}
+                    {loadingRating ? "Loading…" : saving ? "Saving…" : "Save"}
                   </button>
                 </div>
               </footer>

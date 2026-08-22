@@ -1,6 +1,6 @@
-import { after } from "next/server";
 import { type NextRequest, NextResponse } from "next/server";
 
+import { scheduleAfterResponse } from "@/lib/http/scheduleAfterResponse";
 import { syncWamPlaylistsForRating } from "@/lib/playlist/syncWamPlaylist";
 import { createClient } from "@/lib/supabase/server";
 import { fetchRatingById } from "@/lib/ratings/normalize";
@@ -90,11 +90,11 @@ export async function PATCH(
   if (body.score !== undefined) {
     const full = await fetchRatingById(supabase, id);
     if (full) {
-      after(async () => {
-        await syncWamPlaylistsForRating(supabase, user.id, full, {
-          previousScore: priorFull?.score,
-        });
-      });
+      scheduleAfterResponse(() =>
+        syncWamPlaylistsForRating(supabase, user.id, full, {
+          previousRating: priorFull,
+        }),
+      );
     }
   }
 
@@ -115,6 +115,8 @@ export async function DELETE(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const priorFull = await fetchRatingById(supabase, id);
+
   const { data: rows, error } = await supabase
     .from("ratings")
     .delete()
@@ -128,6 +130,13 @@ export async function DELETE(
 
   if (!rows?.length) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
+  // Rebuild Spotify playlists that matched the deleted rating.
+  if (priorFull) {
+    scheduleAfterResponse(() =>
+      syncWamPlaylistsForRating(supabase, user.id, priorFull),
+    );
   }
 
   return NextResponse.json({ ok: true });

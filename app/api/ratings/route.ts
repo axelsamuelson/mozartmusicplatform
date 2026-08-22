@@ -1,6 +1,6 @@
-import { after } from "next/server";
 import { type NextRequest, NextResponse } from "next/server";
 
+import { scheduleAfterResponse } from "@/lib/http/scheduleAfterResponse";
 import { syncWamPlaylistsForRating } from "@/lib/playlist/syncWamPlaylist";
 import { createClient } from "@/lib/supabase/server";
 import { parseOptionalScale1to10 } from "@/lib/ratings/parseScale";
@@ -10,6 +10,7 @@ import {
   normalizeRating,
   RATING_SELECT,
 } from "@/lib/ratings/normalize";
+import { replaceRatingTags } from "@/lib/ratings/replaceRatingTags";
 import { loadScoreHistory } from "@/lib/ratings/scoreHistory";
 import type { DashboardStats } from "@/lib/types/ratings";
 
@@ -270,7 +271,7 @@ export async function POST(request: NextRequest) {
   const comment =
     typeof body.comment === "string" ? body.comment : body.comment ?? null;
 
-  const wantHistory = request.nextUrl.searchParams.get("lite") !== "1";
+  const wantHistory = request.nextUrl.searchParams.get("history") === "1";
 
   const [{ data: cached, error: cacheErr }, { data: existing, error: findErr }] =
     await Promise.all([
@@ -329,11 +330,11 @@ export async function POST(request: NextRequest) {
   }
 
   let ratingId: string;
-  let previousScore: number | undefined;
+  let previousRating: Awaited<ReturnType<typeof fetchRatingById>> = null;
 
   if (existing) {
     ratingId = existing.id;
-    previousScore = existing.score as number;
+    previousRating = await fetchRatingById(supabase, ratingId);
     const updatePayload: Record<string, unknown> = {
       score,
       comment: comment === "" ? null : comment,
@@ -373,42 +374,14 @@ export async function POST(request: NextRequest) {
     ratingId = inserted.id;
   }
 
-  const [{ error: delG }, { error: delMom }] = await Promise.all([
-    supabase.from("rating_genres").delete().eq("rating_id", ratingId),
-    supabase.from("rating_moments").delete().eq("rating_id", ratingId),
-  ]);
-  if (delG) {
-    return NextResponse.json({ error: delG.message }, { status: 500 });
-  }
-  if (delMom) {
-    return NextResponse.json({ error: delMom.message }, { status: 500 });
-  }
-
-  const tagWrites: PromiseLike<{ error: { message: string } | null }>[] = [];
-  if (genre_ids.length) {
-    tagWrites.push(
-      supabase.from("rating_genres").insert(
-        genre_ids.map((genre_tag_id) => ({ rating_id: ratingId, genre_tag_id })),
-      ),
-    );
-  }
-  if (moment_ids.length) {
-    tagWrites.push(
-      supabase.from("rating_moments").insert(
-        moment_ids.map((moment_tag_id) => ({
-          rating_id: ratingId,
-          moment_tag_id,
-        })),
-      ),
-    );
-  }
-  if (tagWrites.length) {
-    const tagResults = await Promise.all(tagWrites);
-    for (const r of tagResults) {
-      if (r.error) {
-        return NextResponse.json({ error: r.error.message }, { status: 500 });
-      }
-    }
+  const tagReplace = await replaceRatingTags(
+    supabase,
+    ratingId,
+    genre_ids,
+    moment_ids,
+  );
+  if (tagReplace.error) {
+    return NextResponse.json({ error: tagReplace.error }, { status: 500 });
   }
 
   const full = await fetchRatingById(supabase, ratingId);
@@ -416,12 +389,14 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Failed to load saved rating" }, { status: 500 });
   }
 
-  after(async () => {
-    await syncWamPlaylistsForRating(supabase, user.id, full, {
-      previousScore,
-    });
-  });
+  scheduleAfterResponse(() =>
+    syncWamPlaylistsForRating(supabase, user.id, full, {
+      previousRating,
+    }),
+  );
 
+  // Default: return immediately. Score history is opt-in (`history=1`) and
+  // otherwise loaded by the client after save — never block "Saving…".
   if (!wantHistory) {
     return NextResponse.json({ rating: full });
   }

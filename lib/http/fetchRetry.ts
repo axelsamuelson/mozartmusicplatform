@@ -40,15 +40,32 @@ export function userFacingFetchError(error: unknown, fallback: string): string {
 export async function fetchWithRetry(
   input: RequestInfo | URL,
   init?: RequestInit,
-  options?: { retries?: number; delaysMs?: number[] },
+  options?: {
+    retries?: number;
+    delaysMs?: number[];
+    /** Abort the request (and retries) after this many ms. */
+    timeoutMs?: number;
+  },
 ): Promise<Response> {
   const retries = options?.retries ?? 2;
   const delaysMs = options?.delaysMs ?? [250, 700, 1_400];
+  const timeoutMs = options?.timeoutMs;
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= retries; attempt++) {
+    const timeoutCtrl =
+      typeof timeoutMs === "number" && timeoutMs > 0
+        ? new AbortController()
+        : null;
+    const timer = timeoutCtrl
+      ? setTimeout(() => timeoutCtrl.abort(), timeoutMs)
+      : null;
     try {
-      const res = await fetch(input, init);
+      const signal =
+        timeoutCtrl && init?.signal && typeof AbortSignal.any === "function"
+          ? AbortSignal.any([timeoutCtrl.signal, init.signal])
+          : (timeoutCtrl?.signal ?? init?.signal);
+      const res = await fetch(input, { ...init, signal });
       if (attempt < retries && TRANSIENT_STATUS.has(res.status)) {
         await wait(delaysMs[attempt] ?? delaysMs[delaysMs.length - 1]!);
         continue;
@@ -56,10 +73,19 @@ export async function fetchWithRetry(
       return res;
     } catch (error) {
       lastError = error;
+      if (
+        error instanceof Error &&
+        (error.name === "AbortError" || error.name === "TimeoutError") &&
+        timeoutCtrl?.signal.aborted
+      ) {
+        throw new Error("Request timed out. Try again.");
+      }
       if (attempt >= retries || !isTransientNetworkError(error)) {
         throw error;
       }
       await wait(delaysMs[attempt] ?? delaysMs[delaysMs.length - 1]!);
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 

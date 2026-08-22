@@ -66,7 +66,11 @@ export async function syncWamPlaylistsForRating(
   supabase: SupabaseClient,
   userId: string,
   rating: RatingDetail,
-  options?: { previousScore?: number },
+  options?: {
+    previousRating?: RatingDetail | null;
+    /** @deprecated Prefer previousRating — score-only fallback. */
+    previousScore?: number;
+  },
 ): Promise<void> {
   if (rating.item?.type !== "track") return;
 
@@ -92,13 +96,15 @@ export async function syncWamPlaylistsForRating(
     return;
   }
 
+  const previous =
+    options?.previousRating ??
+    (options?.previousScore !== undefined
+      ? { ...rating, score: options.previousScore }
+      : null);
+
   const rows = (playlists ?? []) as WamPlaylistRow[];
   const targets = rows.filter((pl) =>
-    playlistNeedsResyncForRating(
-      rating,
-      filtersFromRow(pl),
-      options?.previousScore,
-    ),
+    playlistNeedsResyncForRating(rating, filtersFromRow(pl), previous),
   );
 
   if (targets.length === 0) return;

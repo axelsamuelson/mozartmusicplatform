@@ -6,6 +6,7 @@ import {
   isSpotify429Error,
   recordSpotify429,
   recordSpotifySuccess,
+  releaseSpotifyHalfOpenProbe,
   shouldBlockSpotifyRequests,
   SPOTIFY_CIRCUIT_OPEN_ERROR,
 } from "@/lib/spotify/rateLimiter";
@@ -144,6 +145,8 @@ export async function cachedSpotifyRequest<T>(
         logCache("STALE", `${key} (429)`);
         return existing.data as T;
       }
+    } else {
+      releaseSpotifyHalfOpenProbe();
     }
     throw error;
   }
