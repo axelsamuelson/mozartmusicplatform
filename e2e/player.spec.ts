@@ -1,28 +1,49 @@
 import { test, expect } from "@playwright/test";
 
+async function hasSpotifyPlaybackToken(
+  request: import("@playwright/test").APIRequestContext,
+): Promise<boolean> {
+  const res = await request.get("/api/spotify/playback");
+  if (res.status() === 401) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    return body.error !== "no_token";
+  }
+  return res.ok();
+}
+
 test.describe("player", () => {
-  test("player shell visible when authenticated (no Spotify token)", async ({
-    page,
-  }) => {
+  test("player shell visible when authenticated", async ({ page, request }) => {
+    const linked = await hasSpotifyPlaybackToken(request);
+
     await page.goto("/dashboard");
     await expect(page.getByRole("link", { name: "Dashboard" })).toBeVisible();
 
-    // Test user has Supabase auth but no Spotify provider token.
-    await expect(page.getByText("Spotify connection lost")).toBeVisible({
-      timeout: 30_000,
-    });
-    await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();
+    if (linked) {
+      await expect(page.getByText("Spotify connection lost")).not.toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(
+        page.getByRole("button", { name: /^(Play|Pause)$/ }).first(),
+      ).toBeVisible({ timeout: 30_000 });
+    } else {
+      await expect(page.getByText("Spotify connection lost")).toBeVisible({
+        timeout: 30_000,
+      });
+      await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();
+    }
   });
 
   test("playback API responds for authenticated user", async ({ request }) => {
     const res = await request.get("/api/spotify/playback");
-    expect([200, 401]).toContain(res.status());
     const body = (await res.json()) as { error?: string; isPlaying?: boolean };
+
     if (res.status() === 401) {
       expect(body.error).toBe("no_token");
-    } else {
-      expect(typeof body.isPlaying).toBe("boolean");
+      return;
     }
+
+    expect(res.ok()).toBeTruthy();
+    expect(typeof body.isPlaying).toBe("boolean");
   });
 
   test("dev live quick-start works", async ({ request }) => {
