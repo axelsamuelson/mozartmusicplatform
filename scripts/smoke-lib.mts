@@ -1,6 +1,7 @@
 import "./load-env-local.mts";
 
 import { SMOKE_BASE_URL, SMOKE_TRACK_ID } from "../lib/smoke/constants";
+import { smokeTargetHeaders } from "../lib/smoke/target";
 
 export { SMOKE_BASE_URL, SMOKE_TRACK_ID };
 
@@ -23,7 +24,10 @@ export function cookieHeaderFromResponse(res: Response): string {
 export async function smokeLogin(
   base = SMOKE_BASE_URL,
 ): Promise<SmokeLoginResult> {
-  const loginRes = await fetch(`${base}/api/dev/smoke/login`, { method: "POST" });
+  const loginRes = await fetch(`${base}/api/dev/smoke/login`, {
+    method: "POST",
+    headers: smokeTargetHeaders(),
+  });
   const loginBody = (await loginRes.json().catch(() => ({}))) as {
     ok?: boolean;
     email?: string;

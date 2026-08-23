@@ -1,6 +1,11 @@
 import { defineConfig, devices } from "@playwright/test";
 
+import { isLocalSmokeBase } from "./lib/smoke/target";
+
 const baseURL = process.env.SMOKE_BASE_URL ?? "http://localhost:3000";
+const localTarget = isLocalSmokeBase(baseURL);
+const webServerCommand =
+  process.env.SMOKE_WEB_SERVER ?? (localTarget ? "npm run dev" : undefined);
 
 export default defineConfig({
   testDir: "./e2e",
@@ -25,10 +30,14 @@ export default defineConfig({
       dependencies: ["setup"],
     },
   ],
-  webServer: {
-    command: "npm run dev",
-    url: baseURL,
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  ...(webServerCommand
+    ? {
+        webServer: {
+          command: webServerCommand,
+          url: baseURL,
+          reuseExistingServer: !process.env.CI,
+          timeout: 180_000,
+        },
+      }
+    : {}),
 });
