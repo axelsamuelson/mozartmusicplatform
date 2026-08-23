@@ -19,7 +19,10 @@ export async function loadTagsCatalog(signal?: AbortSignal): Promise<TagsCatalog
     throw new DOMException("Aborted", "AbortError");
   }
   if (!inflight) {
-    inflight = fetchWithRetry("/api/tags")
+    inflight = fetchWithRetry("/api/tags", signal ? { signal } : undefined, {
+      timeoutMs: 10_000,
+      retries: 1,
+    })
       .then(async (res) => {
         const body = (await res.json().catch(() => ({}))) as {
           error?: string;

@@ -28,6 +28,11 @@ const PLAYBACK_POLLING_DISABLED =
 
 const IDLE_API_MS = 60_000;
 const ACTIVE_POLL_CAP_MS = 3_000;
+/** Minimum gap between playback API polls (stops SDK/error feedback loops). */
+const MIN_PLAYBACK_FETCH_MS = 2_500;
+const MIN_FORCE_PLAYBACK_FETCH_MS = 1_500;
+const SDK_EMPTY_TRACK_POLL_MS = 5_000;
+const PLAYBACK_HTTP_BACKOFF_MS = 60_000;
 /** Early polls to detect external-device track changes. */
 const EARLY_SKIP_MS = [2_000, 6_000, 15_000] as const;
 /** Fewer, spaced polls — avoid stampeding Spotify after skip on external devices. */
@@ -104,6 +109,9 @@ export function useUnifiedPlayback(options: {
   const skipIgnoreUntilRef = useRef(0);
   const forceFetchGenRef = useRef(0);
   const forceFetchAbortRef = useRef<AbortController | null>(null);
+  const lastApiFetchAtRef = useRef(0);
+  const playbackPollBackoffUntilRef = useRef(0);
+  const lastSdkEmptyPollAtRef = useRef(0);
 
   useEffect(() => {
     playbackRef.current = playback;
@@ -273,6 +281,15 @@ export function useUnifiedPlayback(options: {
     ) {
       return;
     }
+    const now = Date.now();
+    if (now < playbackPollBackoffUntilRef.current) {
+      return;
+    }
+    const minGap = force ? MIN_FORCE_PLAYBACK_FETCH_MS : MIN_PLAYBACK_FETCH_MS;
+    if (now - lastApiFetchAtRef.current < minGap) {
+      return;
+    }
+    lastApiFetchAtRef.current = now;
     if (!isLeaderRef.current && playbackRef.current) {
       return;
     }
@@ -299,6 +316,15 @@ export function useUnifiedPlayback(options: {
       });
       if (force && gen !== forceFetchGenRef.current) return;
 
+      if (res.status === 403 || res.status === 429) {
+        playbackPollBackoffUntilRef.current = Date.now() + PLAYBACK_HTTP_BACKOFF_MS;
+        return;
+      }
+      if (res.status >= 500) {
+        playbackPollBackoffUntilRef.current = Date.now() + 15_000;
+        return;
+      }
+
       const circuit = res.headers.get("X-WAM-Circuit");
       setLastPlaybackCircuitHeader(circuit);
       if (circuit === "open") {
@@ -315,11 +341,9 @@ export function useUnifiedPlayback(options: {
         const sdkId = playbackRef.current?.trackId;
         // Don't let a transient empty API poll wipe an active SDK session.
         if (!next.trackId) {
-          scheduleApiFetch(playbackRef.current);
           return;
         }
         if (sdkId && next.trackId && sdkId === next.trackId) {
-          scheduleApiFetch(playbackRef.current);
           return;
         }
       }
@@ -426,7 +450,11 @@ export function useUnifiedPlayback(options: {
     if (!playbackReady) return;
     return registerStateChangeListener((state) => {
       if (!state?.track_window?.current_track) {
-        // Always re-check API — local state may still look "SDK primary".
+        const now = Date.now();
+        if (now - lastSdkEmptyPollAtRef.current < SDK_EMPTY_TRACK_POLL_MS) {
+          return;
+        }
+        lastSdkEmptyPollAtRef.current = now;
         void fetchApiPlayback(true);
         return;
       }

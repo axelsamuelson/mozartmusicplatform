@@ -53,6 +53,9 @@ export async function smokeFetch(
   base = SMOKE_BASE_URL,
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
+  for (const [key, value] of Object.entries(smokeTargetHeaders())) {
+    headers.set(key, value);
+  }
   headers.set("Cookie", cookie);
   return fetch(`${base}${path}`, { ...init, headers });
 }

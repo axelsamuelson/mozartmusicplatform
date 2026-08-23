@@ -103,11 +103,13 @@ export function NowPlayingRatingDialog({
           fetchWithRetry(
             `/api/spotify/item/${encodeURIComponent(spotifyId)}?type=${encodeURIComponent(itemType)}`,
             { signal: ac.signal },
+            { timeoutMs: 10_000, retries: 1 },
           ),
-          loadTagsCatalog(),
+          loadTagsCatalog(ac.signal),
           fetchWithRetry(
             `/api/ratings?spotify_id=${encodeURIComponent(spotifyId)}&lite=1`,
             { signal: ac.signal },
+            { timeoutMs: 10_000, retries: 1 },
           ),
         ]);
 
@@ -126,17 +128,21 @@ export function NowPlayingRatingDialog({
           error?: string;
           rating?: RatingDetail | null;
         };
-        if (!ratRes.ok) throw new Error(ratBody.error ?? "Failed to load rating");
-        const nextRating = ratBody.rating ?? null;
-        setRating(nextRating);
-        if (!dirtyRef.current) {
-          const s = stateFromRating(nextRating);
-          setScore(s.score);
-          setComment(s.comment);
-          setGenreIds(s.genreIds);
-          setTempo(s.tempo);
-          setIntensity(s.intensity);
-          setMomentIds(s.momentIds);
+        if (!ratRes.ok) {
+          // Still allow saving — user may be rating before prior rating loads.
+          setError(ratBody.error ?? "Could not load previous rating. You can still save.");
+        } else {
+          const nextRating = ratBody.rating ?? null;
+          setRating(nextRating);
+          if (!dirtyRef.current) {
+            const s = stateFromRating(nextRating);
+            setScore(s.score);
+            setComment(s.comment);
+            setGenreIds(s.genreIds);
+            setTempo(s.tempo);
+            setIntensity(s.intensity);
+            setMomentIds(s.momentIds);
+          }
         }
       } catch (e) {
         if (e instanceof Error && e.name === "AbortError") return;
@@ -161,7 +167,6 @@ export function NowPlayingRatingDialog({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (loadingRating) return;
     const savedForId = spotifyId;
     const previousRating = rating;
     const optimistic: RatingDetail = {
@@ -421,10 +426,10 @@ export function NowPlayingRatingDialog({
                   ) : null}
                   <button
                     type="submit"
-                    disabled={saving || deleting || loadingRating}
+                    disabled={saving || deleting}
                     className="rounded-full bg-wam px-6 py-2 text-sm font-semibold text-black transition-colors hover:bg-wam/90 disabled:opacity-50"
                   >
-                    {loadingRating ? "Loading…" : saving ? "Saving…" : "Save"}
+                    {saving ? "Saving…" : isUpdate ? "Update" : "Save"}
                   </button>
                 </div>
               </footer>
