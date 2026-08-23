@@ -30,5 +30,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "cliste-template"]
+  "exclude": ["node_modules", "cliste-template", "scripts"]
 }
