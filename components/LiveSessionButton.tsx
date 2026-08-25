@@ -805,10 +805,14 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
                 </Button>
                 <Button
                   type="button"
-                  asChild
                   className="flex-1 bg-wam text-black hover:bg-wam/90"
+                  onClick={() => {
+                    if (!code) return;
+                    setDialogOpen(false);
+                    router.push(`/live/${code}`);
+                  }}
                 >
-                  <Link href={`/live/${code}`}>Open room</Link>
+                  Open room
                 </Button>
               </div>
 
