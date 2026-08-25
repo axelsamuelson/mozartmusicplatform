@@ -7,8 +7,10 @@ import { toast } from "sonner";
 import { JukeboxAddSong } from "@/components/live/JukeboxAddSong";
 import { JukeboxQueue } from "@/components/live/JukeboxQueue";
 import { JukeboxScoreboard } from "@/components/live/JukeboxScoreboard";
+import { JamSyncIndicator } from "@/components/live/JamSyncIndicator";
 import { LiveJamsRoom } from "@/components/live/LiveJamsRoom";
 import { LiveSimulatePanel } from "@/components/live/LiveSimulatePanel";
+import { QuickRate } from "@/components/live/QuickRate";
 import { useTestParticipants } from "@/lib/dev/useTestParticipants";
 import { fetchWithRetry, userFacingFetchError } from "@/lib/http/fetchRetry";
 import { SessionTimer } from "@/components/live/SessionTimer";
@@ -37,6 +39,7 @@ import {
   sessionHasQueue,
   sessionHasScores,
 } from "@/lib/live/sessionMode";
+import { useJamOverlaySync } from "@/lib/live/useJamOverlaySync";
 import { useLiveQueueAutoAdvance } from "@/lib/live/useLiveQueueAutoAdvance";
 import { useLiveSessionChannel } from "@/lib/live/useLiveSessionChannel";
 import { useLiveSessionDisplayName } from "@/lib/live/useLiveSessionDisplayName";
@@ -84,6 +87,7 @@ export default function LiveSessionPage() {
   const advanceCooldownUntilRef = useRef(0);
 
   const sessionMode = session ? getEffectiveLiveSessionMode(session) : "legacy";
+  const jamOverlay = sessionMode === "spotify_jam_overlay";
   const jams = sessionMode === "jams";
   const fifoQueue = sessionMode === "queue";
   const jukebox = sessionMode === "jukebox";
@@ -91,9 +95,15 @@ export default function LiveSessionPage() {
   const showSongQueue = fifoQueue || jukebox;
   const isHost = Boolean(session && userId && session.host_user_id === userId);
   const isCoHost = Boolean(session && userId && session.co_host_user_id === userId);
-  const canControlPlayback = isHost || isCoHost;
+  const canControlPlayback = !jamOverlay && (isHost || isCoHost);
   const isTrackOwner = Boolean(
     showSongQueue && userId && session?.current_track_user_id === userId,
+  );
+
+  const { syncStatus } = useJamOverlaySync(
+    session?.id ?? null,
+    session?.spotify_track_id ?? null,
+    jamOverlay && Boolean(session?.id),
   );
 
   const currentRatings = useMemo(
@@ -504,36 +514,93 @@ export default function LiveSessionPage() {
         <p className="text-xs uppercase tracking-widest text-white/40">
           {sessionIsSimulated
             ? "Test session"
-            : jams
-              ? "WAM Jams"
-              : jukebox
-                ? "Jukebox session"
-                : "Live session"}
+            : jamOverlay
+              ? "Live session"
+              : jams
+                ? "WAM Jams"
+                : jukebox
+                  ? "Jukebox session"
+                  : "Live session"}
         </p>
+        {jamOverlay ? (
+          <span className="mt-2 inline-block rounded-full border border-wam/20 bg-wam/10 px-2 py-0.5 text-[10px] text-wam/60">
+            Spotify Jam Overlay
+          </span>
+        ) : null}
         <p className="mt-1 font-mono text-2xl font-bold tracking-[0.3em] text-wam">{code}</p>
+        {jamOverlay ? (
+          <div className="mt-3">
+            <JamSyncIndicator status={syncStatus} />
+          </div>
+        ) : null}
         {session.anonymous_mode ? (
           <p className="mt-2 text-xs font-medium text-wam/90">
             Anonymous mode — you are {displayName}
           </p>
         ) : null}
-        <SessionTimer
-          session={session}
-          onExpire={() => {
-            if (!canControlPlayback) return;
-            void fetch(`/api/live/${session.id}/end`, { method: "POST" }).then(() => {
-              window.location.href = `/live/${code}/summary`;
-            });
-          }}
-        />
+        {!jamOverlay ? (
+          <SessionTimer
+            session={session}
+            onExpire={() => {
+              if (!canControlPlayback) return;
+              void fetch(`/api/live/${session.id}/end`, { method: "POST" }).then(() => {
+                window.location.href = `/live/${code}/summary`;
+              });
+            }}
+          />
+        ) : null}
         <p className={cn(pageSub, "mt-2")}>
           {ratedCount} of {onlineCount} rated this track
         </p>
-        {session.wam_controls_playback ? (
+        {session.wam_controls_playback && !jamOverlay ? (
           <p className="mt-1 text-xs text-wam">● WAM controls playback</p>
         ) : null}
       </header>
 
-      {jams ? (
+      {jamOverlay ? (
+        <div className="space-y-6">
+          <LiveNowPlaying session={session} />
+
+          <section className={cn(glassCard)}>
+            <p className="mb-3 text-center text-xs uppercase tracking-wider text-white/40">
+              In the room
+            </p>
+            <LiveParticipants
+              participants={displayParticipants}
+              hideAvatars={hideAvatars}
+            />
+          </section>
+
+          {userId && session.spotify_track_id ? (
+            <QuickRate
+              sessionId={session.id}
+              session={session}
+              userId={userId}
+              trackId={session.spotify_track_id}
+              trackStartedAt={session.current_track_started_at}
+              hasRatedCurrent={hasSubmitted}
+              ratingCount={ratedCount}
+              participantCount={onlineCount}
+              averageScore={hasSubmitted ? displayAggregate?.average_score : null}
+              canSeeOthers={hasSubmitted}
+              onSubmitted={handleRefresh}
+            />
+          ) : (
+            <section className={cn(glassCard)}>
+              <p className="text-center text-sm text-white/50">
+                Play a track in your Spotify Jam — the room will follow along.
+              </p>
+            </section>
+          )}
+
+          <LiveResults
+            ratings={currentRatings}
+            aggregate={displayAggregate}
+            hideAvatars={hideAvatars}
+            showWaiting={ratedCount === 0 && Boolean(session.spotify_track_id)}
+          />
+        </div>
+      ) : jams ? (
         <LiveJamsRoom
           session={session}
           userId={userId}
@@ -572,10 +639,10 @@ export default function LiveSessionPage() {
             }}
           />
 
-          {canControlPlayback && (showSongQueue || jams) ? (
+          {canControlPlayback && showSongQueue ? (
             <button
               type="button"
-              disabled={advancing || (!jams && queue.length === 0)}
+              disabled={advancing || queue.length === 0}
               onClick={() => void handleNextTrack()}
               className="w-full rounded-full bg-wam py-3.5 text-sm font-semibold text-black transition-opacity hover:bg-wam/90 disabled:opacity-40"
             >

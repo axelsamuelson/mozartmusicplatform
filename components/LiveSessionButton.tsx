@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { Copy, EyeOff, ListMusic, Radio, X } from "lucide-react";
+import { Copy, EyeOff, Headphones, ListMusic, Radio, X } from "lucide-react";
 import { toast } from "sonner";
 
 import { LiveNowPlaying } from "@/components/LiveNowPlaying";
@@ -34,7 +34,12 @@ import { isLiveSimulateEnabled } from "@/lib/dev/liveSimulateGate";
 import { startQuickTestSession } from "@/lib/dev/startQuickTestSession";
 import { isLiveAdvancedModesEnabled } from "@/lib/live/liveAdvancedModes";
 import { normalizeJukeboxRankingMode } from "@/lib/live/jukeboxRanking";
-import type { ActiveLiveSessionRef, JukeboxRankingMode, LiveSessionRow } from "@/lib/types/live";
+import type {
+  ActiveLiveSessionRef,
+  JukeboxRankingMode,
+  LiveSessionHostingMode,
+  LiveSessionRow,
+} from "@/lib/types/live";
 import { formatSessionCode } from "@/lib/utils/sessionCode";
 import { cn } from "@/lib/utils";
 
@@ -181,14 +186,18 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
     }
   }
 
-  async function handleStart() {
-    if (!canStart) {
+  async function handleStart(mode: LiveSessionHostingMode = "wam_hosted") {
+    if (mode === "wam_hosted" && !canStart) {
       toast.error("Play a track on Spotify before starting a live session.");
       return;
     }
     setStarting(true);
     try {
-      const res = await fetch("/api/live", { method: "POST" });
+      const res = await fetch("/api/live", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
       const body = (await res.json().catch(() => ({}))) as {
         error?: string;
         sessionId?: string;
@@ -202,12 +211,16 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
       const sess = body.session;
       const ref = sess
         ? activeLiveSessionRefFromRow(sess)
-        : { sessionId, code };
+        : { sessionId, code, mode };
       setActiveLiveSession(ref);
       setActive(ref);
       setSession(sess ?? null);
       setDialogOpen(true);
-      toast.success("Live session started");
+      toast.success(
+        mode === "spotify_jam_overlay"
+          ? "Spotify Jam Overlay started"
+          : "Live session started",
+      );
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not start session");
     } finally {
@@ -443,6 +456,9 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
 
   const code = active?.code ?? session?.code;
   const formattedCode = code ? formatSessionCode(code) : "";
+  const isJamOverlay =
+    session?.mode === "spotify_jam_overlay" ||
+    active?.mode === "spotify_jam_overlay";
 
   return (
     <>
@@ -478,15 +494,15 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
       ) : (
         <button
           type="button"
-          onClick={() => void handleStart()}
-          disabled={starting || !canStart}
+          onClick={() => setDialogOpen(true)}
+          disabled={starting}
           className={cn(
             compact
               ? "flex size-9 shrink-0 items-center justify-center rounded-full text-white/60 active:bg-white/10 active:text-wam disabled:opacity-40"
               : "shrink-0 rounded-full border border-white/20 px-3 py-1 text-xs font-medium text-white/60 transition-colors hover:border-wam hover:text-wam disabled:opacity-40",
             className,
           )}
-          title={canStart ? "Start a live rating session" : "Play a track first"}
+          title="Start a live rating session"
           aria-label="Start live session"
         >
           {starting ? "…" : compact ? <Radio className="size-4" aria-hidden /> : "Live"}
@@ -499,7 +515,7 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
           className="flex max-h-[min(90dvh,720px)] max-w-md flex-col gap-0 overflow-hidden border-white/10 bg-black/90 p-0 text-white backdrop-blur-xl sm:max-w-md"
         >
           <div className="flex shrink-0 items-start justify-between gap-2 border-b border-white/10 px-4 py-4">
-            <HeaderText />
+            <HeaderText jamOverlay={isJamOverlay} pickingMode={!active} />
             <button
               type="button"
               onClick={() => setDialogOpen(false)}
@@ -510,13 +526,62 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
             </button>
           </div>
 
-          {code ? (
+          {!active ? (
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-4">
+              <p className="text-center text-xs text-white/45">Choose how you want to rate together</p>
+              <button
+                type="button"
+                disabled={starting || !canStart}
+                onClick={() => void handleStart("wam_hosted")}
+                className={cn(
+                  "w-full rounded-xl border border-white/10 bg-white/5 p-4 text-left transition-colors hover:border-wam/40 hover:bg-wam/5",
+                  (!canStart || starting) && "opacity-50",
+                )}
+              >
+                <p className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Radio className="size-4 text-wam" aria-hidden />
+                  WAM Session
+                </p>
+                <p className="mt-1 text-xs text-white/50">WAM controls playback</p>
+                <p className="mt-0.5 text-xs text-white/40">Queue songs, skip, rank</p>
+                {!canStart ? (
+                  <p className="mt-2 text-[10px] text-orange-300/80">
+                    Play a track on Spotify first
+                  </p>
+                ) : null}
+              </button>
+              <button
+                type="button"
+                disabled={starting}
+                onClick={() => void handleStart("spotify_jam_overlay")}
+                className="w-full rounded-xl border border-white/10 bg-white/5 p-4 text-left transition-colors hover:border-wam/40 hover:bg-wam/5 disabled:opacity-50"
+              >
+                <p className="flex items-center gap-2 text-sm font-semibold text-white">
+                  <Headphones className="size-4 text-wam" aria-hidden />
+                  Spotify Jam Overlay
+                </p>
+                <p className="mt-1 text-xs text-white/50">Rate music in your Spotify Jam</p>
+                <p className="mt-0.5 text-xs text-white/40">Spotify controls playback</p>
+              </button>
+            </div>
+          ) : code ? (
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-4 py-4">
               <p className="text-center font-mono text-4xl font-bold tracking-[0.35em] text-wam">
                 {formattedCode}
               </p>
 
-              {!advancedModes ? (
+              {isJamOverlay ? (
+                <div className="rounded-xl border border-wam/20 bg-wam/5 p-4 text-left">
+                  <p className="text-sm font-medium text-wam">Spotify Jam Overlay</p>
+                  <ol className="mt-2 list-decimal space-y-1.5 pl-4 text-xs text-white/55">
+                    <li>Start a Spotify Jam in your Spotify app</li>
+                    <li>Share both the Jam link AND this WAM code</li>
+                    <li>Everyone joins both to rate together</li>
+                  </ol>
+                </div>
+              ) : null}
+
+              {!isJamOverlay && !advancedModes ? (
                 <>
                   <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                     <div className="flex items-start justify-between gap-3">
@@ -557,7 +622,7 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
                 </>
               ) : null}
 
-              {advancedModes ? (
+              {!isJamOverlay && advancedModes ? (
               <>
               <div className="rounded-xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -689,7 +754,9 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
                 <LiveNowPlaying session={session} className="!p-4" />
               ) : null}
 
-              {advancedModes && (session?.jukebox_enabled || session?.jams_enabled) ? (
+              {!isJamOverlay &&
+              advancedModes &&
+              (session?.jukebox_enabled || session?.jams_enabled) ? (
                 <>
                   <ShareFromSpotifyPanel sessionCode={formattedCode} />
                   <Button
@@ -809,15 +876,29 @@ function JukeboxRankingModePicker({
   );
 }
 
-function HeaderText() {
+function HeaderText({
+  jamOverlay,
+  pickingMode,
+}: {
+  jamOverlay?: boolean;
+  pickingMode?: boolean;
+}) {
   return (
     <div>
       <DialogTitle className="flex items-center gap-2 text-lg">
         <Radio className="size-4 text-wam" aria-hidden />
-        Live session
+        {pickingMode
+          ? "Start live session"
+          : jamOverlay
+            ? "Spotify Jam Overlay"
+            : "Live session"}
       </DialogTitle>
       <DialogDescription className="text-white/50">
-        Share the code so others can rate the same track in real time.
+        {pickingMode
+          ? "Pick WAM-hosted playback or rate along with a Spotify Jam."
+          : jamOverlay
+            ? "Share the code so others can rate the same Jam track in real time."
+            : "Share the code so others can rate the same track in real time."}
       </DialogDescription>
     </div>
   );

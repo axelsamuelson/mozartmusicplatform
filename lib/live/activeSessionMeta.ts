@@ -16,6 +16,7 @@ export function activeLiveSessionRefFromRow(
     sessionId: session.id,
     code: session.code,
     hostUserId: session.host_user_id,
+    mode: session.mode === "spotify_jam_overlay" ? "spotify_jam_overlay" : "wam_hosted",
     wamControlsPlayback: session.wam_controls_playback ?? false,
     jamsEnabled: session.jams_enabled ?? false,
     jukeboxEnabled: session.jukebox_enabled ?? false,
@@ -92,6 +93,7 @@ export function shouldEnableLiveSessionHostSync(
   if (active.simulated) return false;
   if (active.hostUserId !== currentUserId) return false;
   return !shouldSkipHostPlaybackSync({
+    mode: active.mode,
     jams_enabled: Boolean(active.jamsEnabled),
     jukebox_enabled: Boolean(active.jukeboxEnabled),
     wam_controls_playback: Boolean(active.wamControlsPlayback),

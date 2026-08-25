@@ -4,12 +4,15 @@ export type JukeboxRankingMode = "points" | "average";
 export type QueueMode = "transparent" | "surprise";
 export type RankingVisibility = "full" | "masked" | "end_only";
 export type LiveSessionSourceType = "playlist" | "top_rated" | "none";
+export type LiveSessionHostingMode = "wam_hosted" | "spotify_jam_overlay";
 
 export type LiveSessionRow = {
   id: string;
   code: string;
   host_user_id: string;
   co_host_user_id?: string | null;
+  /** Hosting mode: WAM-controlled vs Spotify Jam overlay. */
+  mode?: LiveSessionHostingMode;
   spotify_track_id: string | null;
   track_name: string | null;
   artist_name: string | null;
@@ -70,6 +73,7 @@ export type ActiveLiveSessionRef = {
   sessionId: string;
   code: string;
   hostUserId?: string;
+  mode?: LiveSessionHostingMode;
   wamControlsPlayback?: boolean;
   jamsEnabled?: boolean;
   jukeboxEnabled?: boolean;

@@ -7,7 +7,7 @@ import { fetchCurrentPlayback } from "@/lib/spotify/currentlyPlaying";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { requireProviderAccessToken } from "@/lib/supabase/providerToken";
-import type { LiveSessionRow } from "@/lib/types/live";
+import type { LiveSessionHostingMode, LiveSessionRow } from "@/lib/types/live";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +24,10 @@ async function uniqueCode(
     if (!data) return code;
   }
   throw new Error("Could not allocate session code");
+}
+
+function parseHostingMode(raw: unknown): LiveSessionHostingMode {
+  return raw === "spotify_jam_overlay" ? "spotify_jam_overlay" : "wam_hosted";
 }
 
 export async function GET(request: NextRequest) {
@@ -60,7 +64,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({ session: data as LiveSessionRow });
 }
 
-export async function POST() {
+export async function POST(request: NextRequest) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -68,6 +72,14 @@ export async function POST() {
 
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  let hostingMode: LiveSessionHostingMode = "wam_hosted";
+  try {
+    const body = (await request.json()) as { mode?: unknown };
+    hostingMode = parseHostingMode(body.mode);
+  } catch {
+    /* empty / non-JSON body → wam_hosted */
   }
 
   let accessToken: string;
@@ -84,14 +96,6 @@ export async function POST() {
     return NextResponse.json({ error: msg || "Auth failed" }, { status: 401 });
   }
 
-  const playback = await fetchCurrentPlayback(accessToken, { userId: user.id });
-  if (!playback?.trackId || playback.itemKind !== "track") {
-    return NextResponse.json(
-      { error: "Start playing a track on Spotify before starting a live session." },
-      { status: 400 },
-    );
-  }
-
   await supabase
     .from("live_sessions")
     .update({ is_active: false })
@@ -99,6 +103,44 @@ export async function POST() {
     .eq("is_active", true);
 
   const code = await uniqueCode(supabase);
+
+  if (hostingMode === "spotify_jam_overlay") {
+    const { data: inserted, error: insertErr } = await supabase
+      .from("live_sessions")
+      .insert({
+        code,
+        host_user_id: user.id,
+        is_active: true,
+        anonymous_mode: false,
+        mode: "spotify_jam_overlay",
+        wam_controls_playback: false,
+        jams_enabled: false,
+        jukebox_enabled: false,
+      })
+      .select("*")
+      .single();
+
+    if (insertErr || !inserted) {
+      return NextResponse.json(
+        { error: insertErr?.message ?? "Failed to create session" },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({
+      sessionId: inserted.id as string,
+      code: inserted.code as string,
+      session: inserted as LiveSessionRow,
+    });
+  }
+
+  const playback = await fetchCurrentPlayback(accessToken, { userId: user.id });
+  if (!playback?.trackId || playback.itemKind !== "track") {
+    return NextResponse.json(
+      { error: "Start playing a track on Spotify before starting a live session." },
+      { status: 400 },
+    );
+  }
 
   const playbackPatch = playbackToSessionPatch(playback);
 
@@ -109,6 +151,7 @@ export async function POST() {
       host_user_id: user.id,
       is_active: true,
       anonymous_mode: false,
+      mode: "wam_hosted",
       ...playbackPatch,
     })
     .select("*")

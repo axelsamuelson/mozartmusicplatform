@@ -65,6 +65,10 @@ type PatchBody = {
   co_host_user_id?: string | null;
   host_disconnected_at?: string | null;
   advance_lock_at?: string | null;
+  spotify_track_id?: string | null;
+  track_name?: string | null;
+  artist_name?: string | null;
+  image_url?: string | null;
 };
 
 export async function PATCH(
@@ -103,6 +107,13 @@ export async function PATCH(
   const hasHostDisconnected = body.host_disconnected_at !== undefined;
   const hasAdvanceLock = body.advance_lock_at !== undefined;
 
+  const hasTrackId = typeof body.spotify_track_id === "string" && body.spotify_track_id.length > 0;
+  const hasTrackName = body.track_name !== undefined;
+  const hasArtistName = body.artist_name !== undefined;
+  const hasImageUrl = body.image_url !== undefined;
+  const hasOverlayTrackPatch =
+    hasTrackId || hasTrackName || hasArtistName || hasImageUrl;
+
   const queueFieldsRequested = hasJukebox || hasHideQueueNames;
   const advancedOnlyFieldsRequested =
     hasJams ||
@@ -127,7 +138,8 @@ export async function PATCH(
     !hasAnonymous &&
     !patchableFieldsRequested &&
     !hasHostDisconnected &&
-    !hasAdvanceLock
+    !hasAdvanceLock &&
+    !hasOverlayTrackPatch
   ) {
     return NextResponse.json({ error: "No valid fields to update" }, { status: 400 });
   }
@@ -155,7 +167,56 @@ export async function PATCH(
   if (!row) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  const isHost = row.host_user_id === user.id;
+
+  const sessionRow = row as LiveSessionRow;
+  const isHost = sessionRow.host_user_id === user.id;
+  const isJamOverlay = sessionRow.mode === "spotify_jam_overlay";
+  const allowOverlayTrackPatch = isJamOverlay && hasOverlayTrackPatch;
+
+  if (allowOverlayTrackPatch && !patchableFieldsRequested && !hasAnonymous && !hasHostDisconnected && !hasAdvanceLock) {
+    const trackPatch: Record<string, string | null> = {};
+    if (hasTrackId) trackPatch.spotify_track_id = body.spotify_track_id!;
+    if (hasTrackName) {
+      trackPatch.track_name =
+        typeof body.track_name === "string" ? body.track_name : null;
+    }
+    if (hasArtistName) {
+      trackPatch.artist_name =
+        typeof body.artist_name === "string" ? body.artist_name : null;
+    }
+    if (hasImageUrl) {
+      trackPatch.image_url =
+        typeof body.image_url === "string" ? body.image_url : null;
+    }
+    trackPatch.playback_updated_at = new Date().toISOString();
+
+    // RLS only allows host updates — use admin for shared soft-host track mirror.
+    let admin;
+    try {
+      admin = createAdminClient();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Server configuration error";
+      return NextResponse.json({ error: msg }, { status: 500 });
+    }
+
+    const { data: updated, error: updateErr } = await admin
+      .from("live_sessions")
+      .update(trackPatch)
+      .eq("id", sessionId)
+      .eq("is_active", true)
+      .select("*")
+      .single();
+
+    if (updateErr || !updated) {
+      return NextResponse.json(
+        { error: updateErr?.message ?? "Failed to update session" },
+        { status: 500 },
+      );
+    }
+
+    return NextResponse.json({ session: updated as LiveSessionRow });
+  }
+
   if (!isHost && !hasHostDisconnected) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
