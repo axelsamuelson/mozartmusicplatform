@@ -69,6 +69,9 @@ type PatchBody = {
   track_name?: string | null;
   artist_name?: string | null;
   image_url?: string | null;
+  is_playing?: boolean;
+  progress_ms?: number;
+  duration_ms?: number;
 };
 
 export async function PATCH(
@@ -111,8 +114,19 @@ export async function PATCH(
   const hasTrackName = body.track_name !== undefined;
   const hasArtistName = body.artist_name !== undefined;
   const hasImageUrl = body.image_url !== undefined;
+  const hasIsPlaying = typeof body.is_playing === "boolean";
+  const hasProgressMs =
+    typeof body.progress_ms === "number" && Number.isFinite(body.progress_ms);
+  const hasDurationMs =
+    typeof body.duration_ms === "number" && Number.isFinite(body.duration_ms);
   const hasOverlayTrackPatch =
-    hasTrackId || hasTrackName || hasArtistName || hasImageUrl;
+    hasTrackId ||
+    hasTrackName ||
+    hasArtistName ||
+    hasImageUrl ||
+    hasIsPlaying ||
+    hasProgressMs ||
+    hasDurationMs;
 
   const queueFieldsRequested = hasJukebox || hasHideQueueNames;
   const advancedOnlyFieldsRequested =
@@ -174,7 +188,7 @@ export async function PATCH(
   const allowOverlayTrackPatch = isJamOverlay && hasOverlayTrackPatch;
 
   if (allowOverlayTrackPatch && !patchableFieldsRequested && !hasAnonymous && !hasHostDisconnected && !hasAdvanceLock) {
-    const trackPatch: Record<string, string | null> = {};
+    const trackPatch: Record<string, string | number | boolean | null> = {};
     if (hasTrackId) trackPatch.spotify_track_id = body.spotify_track_id!;
     if (hasTrackName) {
       trackPatch.track_name =
@@ -187,6 +201,13 @@ export async function PATCH(
     if (hasImageUrl) {
       trackPatch.image_url =
         typeof body.image_url === "string" ? body.image_url : null;
+    }
+    if (hasIsPlaying) trackPatch.is_playing = body.is_playing!;
+    if (hasProgressMs) {
+      trackPatch.progress_ms = Math.max(0, Math.floor(body.progress_ms!));
+    }
+    if (hasDurationMs) {
+      trackPatch.duration_ms = Math.max(0, Math.floor(body.duration_ms!));
     }
     trackPatch.playback_updated_at = new Date().toISOString();
 

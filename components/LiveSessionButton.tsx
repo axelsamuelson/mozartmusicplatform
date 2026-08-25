@@ -8,6 +8,7 @@ import { toast } from "sonner";
 
 import { LiveNowPlaying } from "@/components/LiveNowPlaying";
 import { LiveParticipants } from "@/components/LiveParticipants";
+import { JamSyncIndicator } from "@/components/live/JamSyncIndicator";
 import { JamsHostSettings } from "@/components/live/JamsHostSettings";
 import { ShareFromSpotifyPanel } from "@/components/live/ShareFromSpotifyPanel";
 import { Button } from "@/components/ui/button";
@@ -26,6 +27,7 @@ import {
   getActiveLiveSession,
   setActiveLiveSession,
 } from "@/lib/live/activeSessionStorage";
+import { useJamOverlaySync } from "@/lib/live/useJamOverlaySync";
 import { useLiveSessionChannel } from "@/lib/live/useLiveSessionChannel";
 import { useLiveSessionDisplayName } from "@/lib/live/useLiveSessionDisplayName";
 import { liveAvatarUrl } from "@/lib/live/userDisplay";
@@ -170,6 +172,19 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
     },
   });
 
+  const isJamOverlaySession =
+    session?.mode === "spotify_jam_overlay" ||
+    active?.mode === "spotify_jam_overlay";
+
+  const { syncStatus: jamSyncStatus } = useJamOverlaySync(
+    active?.sessionId ?? null,
+    session?.spotify_track_id ?? null,
+    Boolean(isJamOverlaySession && active?.sessionId),
+    (next) => {
+      setSession((prev) => (prev ? { ...prev, ...next } : next));
+      syncActiveLiveSessionFromRow(next);
+    },
+  );
   async function handleQuickTest() {
     setStarting(true);
     try {
@@ -456,10 +471,7 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
 
   const code = active?.code ?? session?.code;
   const formattedCode = code ? formatSessionCode(code) : "";
-  const isJamOverlay =
-    session?.mode === "spotify_jam_overlay" ||
-    active?.mode === "spotify_jam_overlay";
-
+  const isJamOverlay = isJamOverlaySession;
   return (
     <>
       {active && code ? (
@@ -578,6 +590,9 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
                     <li>Share both the Jam link AND this WAM code</li>
                     <li>Everyone joins both to rate together</li>
                   </ol>
+                  <div className="mt-3">
+                    <JamSyncIndicator status={jamSyncStatus} />
+                  </div>
                 </div>
               ) : null}
 
@@ -751,7 +766,15 @@ export function LiveSessionButton({ canStart, className, compact }: LiveSessionB
                 </Link>
               </p>
               {session ? (
-                <LiveNowPlaying session={session} className="!p-4" />
+                <LiveNowPlaying
+                  session={session}
+                  className="!p-4"
+                  emptyHint={
+                    isJamOverlay
+                      ? "Play a track in your Spotify Jam — syncing…"
+                      : undefined
+                  }
+                />
               ) : null}
 
               {!isJamOverlay &&

@@ -20,9 +20,15 @@ function formatMs(ms: number): string {
 export type LiveNowPlayingProps = {
   session: LiveSessionRow;
   className?: string;
+  /** Copy for empty state (Jam Overlay vs WAM-hosted). */
+  emptyHint?: string;
 };
 
-export function LiveNowPlaying({ session, className }: LiveNowPlayingProps) {
+export function LiveNowPlaying({
+  session,
+  className,
+  emptyHint = "Waiting for the host to start a track…",
+}: LiveNowPlayingProps) {
   const sessionRef = useRef(session);
   sessionRef.current = session;
 
@@ -86,7 +92,7 @@ export function LiveNowPlaying({ session, className }: LiveNowPlayingProps) {
         ) : (
           <>
             <h1 className="text-lg font-semibold text-white/70">Nothing playing</h1>
-            <p className="text-sm text-white/40">Waiting for the host to start a track…</p>
+            <p className="text-sm text-white/40">{emptyHint}</p>
           </>
         )}
 

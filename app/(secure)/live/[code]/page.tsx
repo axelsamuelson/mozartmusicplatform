@@ -100,12 +100,6 @@ export default function LiveSessionPage() {
     showSongQueue && userId && session?.current_track_user_id === userId,
   );
 
-  const { syncStatus } = useJamOverlaySync(
-    session?.id ?? null,
-    session?.spotify_track_id ?? null,
-    jamOverlay && Boolean(session?.id),
-  );
-
   const currentRatings = useMemo(
     () => (session ? ratingsForCurrentTrack(allRatings, session) : []),
     [allRatings, session],
@@ -184,6 +178,13 @@ export default function LiveSessionPage() {
       setActiveLiveSession(activeLiveSessionRefFromRow(next));
     }
   }, []);
+
+  const { syncStatus } = useJamOverlaySync(
+    session?.id ?? null,
+    session?.spotify_track_id ?? null,
+    jamOverlay && Boolean(session?.id),
+    applySession,
+  );
 
   const loadQueue = useCallback(async (sessionId: string) => {
     const res = await fetch(`/api/live/${sessionId}/queue`);
@@ -559,7 +560,10 @@ export default function LiveSessionPage() {
 
       {jamOverlay ? (
         <div className="space-y-6">
-          <LiveNowPlaying session={session} />
+          <LiveNowPlaying
+            session={session}
+            emptyHint="Play a track in your Spotify Jam — syncing…"
+          />
 
           <section className={cn(glassCard)}>
             <p className="mb-3 text-center text-xs uppercase tracking-wider text-white/40">
