@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { LoadingMark } from "@/components/LoadingMark";
 import { RatingForm } from "@/components/RatingForm";
 import { ScoreHistory } from "@/components/ScoreHistory";
+import { RatingNeighbors } from "@/components/track/RatingNeighbors";
 import { RankLabel, TrackPlaylists } from "@/components/TrackPlaylists";
 import { scoreBadgeClass } from "@/components/ScoreSlider";
 import { Badge } from "@/components/ui/badge";
@@ -348,6 +349,17 @@ export function ItemView() {
                 }}
               />
             )}
+            {item.type === "track" &&
+            rating &&
+            Number.isFinite(rating.score) &&
+            !tagsLoading &&
+            !ratingLoading ? (
+              <RatingNeighbors
+                key={`${item.spotify_id}:${rating.score}`}
+                spotifyId={item.spotify_id}
+                score={rating.score}
+              />
+            ) : null}
           </section>
 
           {item.type === "track" ? (
