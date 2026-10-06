@@ -102,6 +102,31 @@ function GenreChip({
   );
 }
 
+function ExpandToggle({
+  open,
+  onToggle,
+  openLabel,
+  closedLabel,
+  disabled,
+}: {
+  open: boolean;
+  onToggle: () => void;
+  openLabel: string;
+  closedLabel: string;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onToggle}
+      className="self-start text-xs font-medium text-white/50 transition-colors hover:text-white/80 disabled:opacity-50"
+    >
+      {open ? openLabel : closedLabel}
+    </button>
+  );
+}
+
 export function TagPicker({
   genreTags,
   momentTags,
@@ -121,6 +146,8 @@ export function TagPicker({
   const [topGenreIds, setTopGenreIds] = useState<number[]>(
     () => peekTopGenreIds() ?? [],
   );
+  const [genresExpanded, setGenresExpanded] = useState(false);
+  const [momentsExpanded, setMomentsExpanded] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -153,6 +180,14 @@ export function TagPicker({
     [genreTags, topGenreIds],
   );
 
+  const selectedOtherGenres = useMemo(() => {
+    const selected = new Set(selectedGenreIds);
+    return otherGenres.filter((g) => selected.has(g.id));
+  }, [otherGenres, selectedGenreIds]);
+
+  const visibleOtherGenres = genresExpanded ? otherGenres : selectedOtherGenres;
+  const showMoments = momentsExpanded || selectedMomentIds.length > 0;
+
   return (
     <div className={cn("flex flex-col", isDialog ? "gap-6" : "gap-5 md:gap-8", className)}>
       {showTempoIntensity ? (
@@ -162,6 +197,7 @@ export function TagPicker({
           onChange={onTempoIntensityChange}
           disabled={disabled}
           variant={isDialog ? "dialog" : "default"}
+          intensityFirst
         />
       ) : null}
 
@@ -200,98 +236,136 @@ export function TagPicker({
               </div>
             </div>
           ) : null}
-          <div className={cn("flex flex-wrap", isDialog ? "gap-2" : "gap-1.5")}>
-            {otherGenres.map((g) => (
-              <GenreChip
-                key={g.id}
-                genre={g}
-                popular={false}
-                selected={selectedGenreIds.includes(g.id)}
-                isDialog={isDialog}
-                disabled={disabled}
-                onToggle={() =>
-                  onGenresChange(toggleId(selectedGenreIds, g.id))
-                }
-              />
-            ))}
-          </div>
+
+          {visibleOtherGenres.length > 0 ? (
+            <div className={cn("flex flex-wrap", isDialog ? "gap-2" : "gap-1.5")}>
+              {visibleOtherGenres.map((g) => (
+                <GenreChip
+                  key={g.id}
+                  genre={g}
+                  popular={false}
+                  selected={selectedGenreIds.includes(g.id)}
+                  isDialog={isDialog}
+                  disabled={disabled}
+                  onToggle={() =>
+                    onGenresChange(toggleId(selectedGenreIds, g.id))
+                  }
+                />
+              ))}
+            </div>
+          ) : null}
+
+          {otherGenres.length > 0 ? (
+            <ExpandToggle
+              open={genresExpanded}
+              onToggle={() => setGenresExpanded((v) => !v)}
+              closedLabel={`+ More genres (${otherGenres.length})`}
+              openLabel="Show fewer genres"
+              disabled={disabled}
+            />
+          ) : null}
         </div>
       </section>
 
       <section className="flex flex-col gap-3 md:gap-4">
-        <h3 className={isDialog ? "text-sm text-white/60" : sectionHeading}>Moment</h3>
-        {!isDialog ? (
-          <p className="hidden text-xs leading-relaxed text-white/55 md:block">
-            Place, occasion, and activity — pick any that apply (optional).
-          </p>
-        ) : null}
-        {MOMENT_GROUPS.map(({ key, label }) => {
-          const tags = momentTags.filter((t) => t.subcategory === key);
-          const sorted = sortMomentTagsWithSuggestions(tags, suggestions);
-          return (
-            <div key={key} className="flex flex-col gap-2">
-              <h4
-                className={cn(
-                  "font-medium uppercase",
-                  isDialog
-                    ? "text-xs tracking-wider text-white/40"
-                    : "text-xs font-semibold tracking-wide text-white/70",
-                )}
-              >
-                {label}
-              </h4>
-              <div className={cn("flex flex-wrap", isDialog ? "gap-2" : "gap-1.5")}>
-                {sorted.map(({ tag: t, suggested }) => {
-                  const on = selectedMomentIds.includes(t.id);
-                  return (
-                    <Badge
-                      key={t.id}
-                      asChild
-                      variant="outline"
-                      className={cn(
-                        "cursor-pointer rounded-full font-medium transition-colors",
-                        isDialog
-                          ? cn(
-                              "border px-3 py-1 text-xs",
-                              on
-                                ? "border-wam bg-wam/10 text-wam hover:bg-wam/15"
-                                : suggested
-                                  ? "border-wam/40 bg-wam/10 text-wam/70 hover:border-wam/50"
-                                  : "border-white/15 text-white/60 hover:border-white/30 hover:text-white",
-                            )
-                          : cn(
-                              "border px-2.5 py-1 text-xs transition-all duration-200 hover:scale-[1.02]",
-                              on
-                                ? "border-transparent bg-white/90 text-black hover:bg-white"
-                                : suggested
-                                  ? "border-wam/40 bg-wam/10 text-wam/80 hover:border-wam/50"
-                                  : "border-white/20 bg-white/5 text-white/85 hover:border-white/30 hover:bg-white/10",
-                            ),
-                        disabled && "pointer-events-none opacity-50",
-                      )}
-                    >
-                      <button
-                        type="button"
-                        disabled={disabled}
-                        onClick={() =>
-                          onMomentsChange(toggleId(selectedMomentIds, t.id))
-                        }
-                        className="inline-flex items-center gap-1"
-                      >
-                        {t.name}
-                        {suggested && !on ? (
-                          <span className="rounded-full border border-wam/40 bg-wam/10 px-1 py-px text-[10px] font-normal uppercase tracking-wide text-wam/70">
-                            Suggested
-                          </span>
-                        ) : null}
-                      </button>
-                    </Badge>
-                  );
-                })}
-              </div>
+        {!showMoments ? (
+          <ExpandToggle
+            open={false}
+            onToggle={() => setMomentsExpanded(true)}
+            closedLabel="+ Add moment"
+            openLabel="Hide moment"
+            disabled={disabled}
+          />
+        ) : (
+          <>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className={isDialog ? "text-sm text-white/60" : sectionHeading}>
+                Moment
+              </h3>
+              {selectedMomentIds.length === 0 ? (
+                <ExpandToggle
+                  open
+                  onToggle={() => setMomentsExpanded(false)}
+                  closedLabel="+ Add moment"
+                  openLabel="Hide"
+                  disabled={disabled}
+                />
+              ) : null}
             </div>
-          );
-        })}
+            {!isDialog ? (
+              <p className="hidden text-xs leading-relaxed text-white/55 md:block">
+                Place, occasion, and activity — pick any that apply (optional).
+              </p>
+            ) : null}
+            {MOMENT_GROUPS.map(({ key, label }) => {
+              const tags = momentTags.filter((t) => t.subcategory === key);
+              const sorted = sortMomentTagsWithSuggestions(tags, suggestions);
+              return (
+                <div key={key} className="flex flex-col gap-2">
+                  <h4
+                    className={cn(
+                      "font-medium uppercase",
+                      isDialog
+                        ? "text-xs tracking-wider text-white/40"
+                        : "text-xs font-semibold tracking-wide text-white/70",
+                    )}
+                  >
+                    {label}
+                  </h4>
+                  <div className={cn("flex flex-wrap", isDialog ? "gap-2" : "gap-1.5")}>
+                    {sorted.map(({ tag: t, suggested }) => {
+                      const on = selectedMomentIds.includes(t.id);
+                      return (
+                        <Badge
+                          key={t.id}
+                          asChild
+                          variant="outline"
+                          className={cn(
+                            "cursor-pointer rounded-full font-medium transition-colors",
+                            isDialog
+                              ? cn(
+                                  "border px-3 py-1 text-xs",
+                                  on
+                                    ? "border-wam bg-wam/10 text-wam hover:bg-wam/15"
+                                    : suggested
+                                      ? "border-wam/40 bg-wam/10 text-wam/70 hover:border-wam/50"
+                                      : "border-white/15 text-white/60 hover:border-white/30 hover:text-white",
+                                )
+                              : cn(
+                                  "border px-2.5 py-1 text-xs transition-all duration-200 hover:scale-[1.02]",
+                                  on
+                                    ? "border-transparent bg-white/90 text-black hover:bg-white"
+                                    : suggested
+                                      ? "border-wam/40 bg-wam/10 text-wam/80 hover:border-wam/50"
+                                      : "border-white/20 bg-white/5 text-white/85 hover:border-white/30 hover:bg-white/10",
+                                ),
+                            disabled && "pointer-events-none opacity-50",
+                          )}
+                        >
+                          <button
+                            type="button"
+                            disabled={disabled}
+                            onClick={() =>
+                              onMomentsChange(toggleId(selectedMomentIds, t.id))
+                            }
+                            className="inline-flex items-center gap-1"
+                          >
+                            {t.name}
+                            {suggested && !on ? (
+                              <span className="rounded-full border border-wam/40 bg-wam/10 px-1 py-px text-[10px] font-normal uppercase tracking-wide text-wam/70">
+                                Suggested
+                              </span>
+                            ) : null}
+                          </button>
+                        </Badge>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
       </section>
     </div>
   );

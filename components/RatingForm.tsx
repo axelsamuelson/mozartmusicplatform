@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { ScoreSlider } from "@/components/ScoreSlider";
@@ -24,6 +24,8 @@ export interface RatingFormProps {
   initialRating: RatingDetail | null;
   onSaved: (rating: RatingDetail, scoreHistory?: ScoreHistoryEntry[]) => void;
   onDeleted?: () => void;
+  /** Fires whenever the score slider changes (including while dragging). */
+  onScoreChange?: (score: number) => void;
   className?: string;
   presentation?: "page" | "dialog";
   /** Used to upsert cached_items when saving without a prior cache row. */
@@ -53,29 +55,37 @@ export function RatingForm({
   initialRating,
   onSaved,
   onDeleted,
+  onScoreChange,
   className,
   presentation = "page",
   itemMeta,
 }: RatingFormProps) {
   const isDialog = presentation === "dialog";
-  const [score, setScore] = useState(50);
-  const [comment, setComment] = useState("");
-  const [genreIds, setGenreIds] = useState<number[]>([]);
-  const [tempo, setTempo] = useState<number | null>(null);
-  const [intensity, setIntensity] = useState<number | null>(null);
-  const [momentIds, setMomentIds] = useState<number[]>([]);
+  const initial = stateFromRating(initialRating);
+  const [score, setScore] = useState(initial.score);
+  const [comment, setComment] = useState(initial.comment);
+  const [genreIds, setGenreIds] = useState(initial.genreIds);
+  const [tempo, setTempo] = useState<number | null>(initial.tempo);
+  const [intensity, setIntensity] = useState<number | null>(initial.intensity);
+  const [momentIds, setMomentIds] = useState(initial.momentIds);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const onScoreChangeRef = useRef(onScoreChange);
 
   useEffect(() => {
-    const s = stateFromRating(initialRating);
-    setScore(s.score);
-    setComment(s.comment);
-    setGenreIds(s.genreIds);
-    setTempo(s.tempo);
-    setIntensity(s.intensity);
-    setMomentIds(s.momentIds);
-  }, [initialRating]);
+    onScoreChangeRef.current = onScoreChange;
+  }, [onScoreChange]);
+
+  useEffect(() => {
+    onScoreChangeRef.current?.(score);
+    // Publish the mounted score once so neighbors can render above the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only publish
+  }, []);
+
+  function handleScoreChange(next: number) {
+    setScore(next);
+    onScoreChangeRef.current?.(next);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -168,7 +178,7 @@ export function RatingForm({
     >
       <ScoreSlider
         value={score}
-        onChange={setScore}
+        onChange={handleScoreChange}
         disabled={saving || deleting}
         variant={isDialog ? "dialog" : "default"}
       />

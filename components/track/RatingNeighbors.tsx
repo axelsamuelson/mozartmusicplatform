@@ -2,7 +2,7 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Disc3 } from "lucide-react";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -18,9 +18,11 @@ import { cn } from "@/lib/utils";
 
 export type RatingNeighborsProps = {
   spotifyId: string;
-  /** Current score — refetch when the user changes their rating. */
+  /** Live score from the slider — neighbors refresh as this changes. */
   score: number;
 };
+
+const SCORE_DEBOUNCE_MS = 80;
 
 function NeighborCard({
   item,
@@ -106,28 +108,37 @@ export function RatingNeighbors({ spotifyId, score }: RatingNeighborsProps) {
   const [neighbors, setNeighbors] = useState<RatingNeighborsResult | null>(
     null,
   );
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(true);
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
+    if (!spotifyId || !Number.isFinite(score)) return;
+
     const ac = new AbortController();
+    const requestId = ++requestIdRef.current;
+    const timer = window.setTimeout(() => {
+      void fetchRatingNeighbors(spotifyId, score, ac.signal)
+        .then((result) => {
+          if (ac.signal.aborted || requestId !== requestIdRef.current) return;
+          setNeighbors(result);
+        })
+        .catch((e: unknown) => {
+          if (e instanceof Error && e.name === "AbortError") return;
+          // Keep the last successful neighbors while a live refresh fails.
+        })
+        .finally(() => {
+          if (ac.signal.aborted || requestId !== requestIdRef.current) return;
+          setInitialLoading(false);
+        });
+    }, SCORE_DEBOUNCE_MS);
 
-    void fetchRatingNeighbors(spotifyId, ac.signal)
-      .then((result) => {
-        if (ac.signal.aborted) return;
-        setNeighbors(result);
-      })
-      .catch((e: unknown) => {
-        if (e instanceof Error && e.name === "AbortError") return;
-        if (!ac.signal.aborted) setNeighbors(null);
-      })
-      .finally(() => {
-        if (!ac.signal.aborted) setLoading(false);
-      });
-
-    return () => ac.abort();
+    return () => {
+      window.clearTimeout(timer);
+      ac.abort();
+    };
   }, [spotifyId, score]);
 
-  if (loading) {
+  if (initialLoading && !neighbors) {
     return <NeighborsSkeleton />;
   }
 

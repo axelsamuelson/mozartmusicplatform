@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 
 import { Slider } from "@/components/ui/slider";
 import {
@@ -18,6 +18,8 @@ export interface TempoIntensitySliderProps {
   onChange: (tempo: number | null, intensity: number | null) => void;
   disabled?: boolean;
   variant?: "default" | "dialog" | "compact";
+  /** When true, only intensity is shown until the user expands tempo. */
+  intensityFirst?: boolean;
 }
 
 function clampScale(v: number | null, fallback = 5): number {
@@ -87,6 +89,7 @@ export function TempoIntensitySlider({
   onChange,
   disabled,
   variant = "default",
+  intensityFirst = false,
 }: TempoIntensitySliderProps) {
   const isDialog = variant === "dialog";
   const compact = variant === "compact";
@@ -94,13 +97,15 @@ export function TempoIntensitySlider({
   const tempoVal = clampScale(tempo);
   const intensityVal = clampScale(intensity);
 
+  const [tempoOpen, setTempoOpen] = useState(false);
+  const showTempo = !intensityFirst || tempoOpen || tempo != null;
+
   const combo = useMemo(
     () => comboDescriptor(tempoVal, intensityVal),
     [tempoVal, intensityVal],
   );
 
   function setTempo(next: number) {
-    // Don't coerce the other axis from null → display fallback (5).
     onChange(next, intensity);
   }
 
@@ -112,9 +117,13 @@ export function TempoIntensitySlider({
     <div className={cn("flex flex-col", compact ? "gap-3" : isDialog ? "gap-5" : "gap-4 md:gap-6")}>
       {!compact && !isDialog ? (
         <div className="flex flex-col gap-0.5 md:gap-1">
-          <span className={sectionHeading}>Tempo & intensity</span>
+          <span className={sectionHeading}>
+            {showTempo ? "Tempo & intensity" : "Intensity"}
+          </span>
           <p className="hidden text-xs leading-relaxed text-white/55 md:block">
-            How fast and how intense does this track feel? Used to suggest moment tags.
+            {showTempo
+              ? "How fast and how intense does this track feel? Used to suggest moment tags."
+              : "How intense does this track feel?"}
           </p>
         </div>
       ) : null}
@@ -124,19 +133,23 @@ export function TempoIntensitySlider({
           "grid",
           compact
             ? "gap-3"
-            : isDialog
-              ? "grid-cols-1 gap-5"
-              : "grid-cols-2 gap-3 md:gap-5",
+            : showTempo
+              ? isDialog
+                ? "grid-cols-1 gap-5"
+                : "grid-cols-2 gap-3 md:gap-5"
+              : "grid-cols-1 gap-3",
         )}
       >
-        <ScaleRow
-          label="Tempo"
-          value={tempoVal}
-          onValueChange={setTempo}
-          valueLabel={tempoLabel(tempoVal)}
-          disabled={disabled}
-          compact={compact || !isDialog}
-        />
+        {showTempo ? (
+          <ScaleRow
+            label="Tempo"
+            value={tempoVal}
+            onValueChange={setTempo}
+            valueLabel={tempoLabel(tempoVal)}
+            disabled={disabled}
+            compact={compact || !isDialog}
+          />
+        ) : null}
 
         <ScaleRow
           label="Intensity"
@@ -148,16 +161,29 @@ export function TempoIntensitySlider({
         />
       </div>
 
-      <div className="flex justify-center">
-        <span
-          className={cn(
-            "inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
-            combo.pillClass,
-          )}
+      {intensityFirst && !showTempo ? (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setTempoOpen(true)}
+          className="self-start text-xs font-medium text-white/50 transition-colors hover:text-white/80 disabled:opacity-50"
         >
-          {combo.label}
-        </span>
-      </div>
+          + Add tempo
+        </button>
+      ) : null}
+
+      {showTempo ? (
+        <div className="flex justify-center">
+          <span
+            className={cn(
+              "inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide",
+              combo.pillClass,
+            )}
+          >
+            {combo.label}
+          </span>
+        </div>
+      ) : null}
     </div>
   );
 }

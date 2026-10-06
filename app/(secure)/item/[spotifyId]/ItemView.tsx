@@ -75,12 +75,17 @@ export function ItemView() {
 
   const [rating, setRating] = useState<RatingDetail | null>(null);
   const [ratingLoading, setRatingLoading] = useState(false);
+  const [liveScore, setLiveScore] = useState<number | null>(null);
   const [scoreHistory, setScoreHistory] = useState<ScoreHistoryEntry[]>([]);
   const [playing, setPlaying] = useState(false);
   const [playlistRefresh, setPlaylistRefresh] = useState(0);
   const [platformRank, setPlatformRank] = useState<TrackRank | null>(null);
   const spotifyIdRef = useRef(spotifyId);
   const historyFetchRef = useRef<AbortController | null>(null);
+
+  const handleScoreChange = useCallback((score: number) => {
+    setLiveScore(score);
+  }, []);
 
   useEffect(() => {
     spotifyIdRef.current = spotifyId;
@@ -113,6 +118,7 @@ export function ItemView() {
     setItem(null);
     setPlatformRank(null);
     setScoreHistory([]);
+    setLiveScore(null);
 
     fetch(
       `/api/spotify/item/${encodeURIComponent(spotifyId)}?type=${encodeURIComponent(type)}`,
@@ -324,6 +330,16 @@ export function ItemView() {
             </div>
           </header>
 
+          {item.type === "track" &&
+          !tagsLoading &&
+          !ratingLoading &&
+          liveScore != null ? (
+            <RatingNeighbors
+              spotifyId={item.spotify_id}
+              score={liveScore}
+            />
+          ) : null}
+
           <section className="flex flex-col gap-3 md:gap-6">
             <h2 className={sectionHeading}>Your rating</h2>
             {tagsError ? (
@@ -335,12 +351,14 @@ export function ItemView() {
               </div>
             ) : (
               <RatingForm
+                key={rating?.id ?? `new-${item.spotify_id}`}
                 spotifyId={item.spotify_id}
                 genreTags={genreTags}
                 momentTags={momentTags}
                 initialRating={rating}
                 onSaved={handleSaved}
                 onDeleted={handleDeleted}
+                onScoreChange={handleScoreChange}
                 itemMeta={{
                   type: item.type,
                   name: item.name,
@@ -349,17 +367,6 @@ export function ItemView() {
                 }}
               />
             )}
-            {item.type === "track" &&
-            rating &&
-            Number.isFinite(rating.score) &&
-            !tagsLoading &&
-            !ratingLoading ? (
-              <RatingNeighbors
-                key={`${item.spotify_id}:${rating.score}`}
-                spotifyId={item.spotify_id}
-                score={rating.score}
-              />
-            ) : null}
           </section>
 
           {item.type === "track" ? (

@@ -66,16 +66,18 @@ async function fetchMetaViaItemApi(
 }
 
 /**
- * One RPC (`get_rating_neighbors`) from the browser client, then metadata
+ * One RPC (`get_rating_neighbors`) with live `p_score`, then metadata
  * from `cached_items` with `/api/spotify/item` (cachedSpotifyRequest) fallback.
  */
 export async function fetchRatingNeighbors(
   spotifyId: string,
+  score: number,
   signal?: AbortSignal,
 ): Promise<RatingNeighborsResult> {
   const supabase = createClient();
   const { data, error } = await supabase.rpc("get_rating_neighbors", {
     p_track_id: spotifyId,
+    p_score: score,
   });
 
   if (signal?.aborted) {
