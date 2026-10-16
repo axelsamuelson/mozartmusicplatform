@@ -337,6 +337,14 @@ export function ItemView() {
             <RatingNeighbors
               spotifyId={item.spotify_id}
               score={liveScore}
+              vibeKey={
+                rating
+                  ? `${rating.tempo ?? ""}:${rating.intensity ?? ""}:${rating.genres
+                      .map((g) => g.id)
+                      .sort((a, b) => a - b)
+                      .join(",")}`
+                  : ""
+              }
             />
           ) : null}
 

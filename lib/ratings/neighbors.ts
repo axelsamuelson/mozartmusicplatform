@@ -77,3 +77,59 @@ export function neighborItemFromSpotifyPayload(
     image_url: payload.image_url,
   };
 }
+
+/**
+ * Mirrors SQL vibe_tier ranking in get_rating_neighbors:
+ * 0 = exact tempo+intensity+shared genre
+ * 1 = near (|Δ|≤1) tempo+intensity+shared genre
+ * 2 = score-only fallback
+ */
+export function neighborVibeTier(args: {
+  currentTempo: number | null;
+  currentIntensity: number | null;
+  currentGenreIds: number[];
+  candidateTempo: number | null;
+  candidateIntensity: number | null;
+  candidateGenreIds: number[];
+}): number {
+  const {
+    currentTempo,
+    currentIntensity,
+    currentGenreIds,
+    candidateTempo,
+    candidateIntensity,
+    candidateGenreIds,
+  } = args;
+
+  const hasVibe =
+    currentTempo != null &&
+    currentIntensity != null &&
+    currentGenreIds.length > 0;
+
+  if (!hasVibe) return 2;
+
+  const genreOverlap = candidateGenreIds.some((id) =>
+    currentGenreIds.includes(id),
+  );
+  if (!genreOverlap) return 2;
+
+  if (
+    candidateTempo != null &&
+    candidateIntensity != null &&
+    candidateTempo === currentTempo &&
+    candidateIntensity === currentIntensity
+  ) {
+    return 0;
+  }
+
+  if (
+    candidateTempo != null &&
+    candidateIntensity != null &&
+    Math.abs(candidateTempo - currentTempo) <= 1 &&
+    Math.abs(candidateIntensity - currentIntensity) <= 1
+  ) {
+    return 1;
+  }
+
+  return 2;
+}
