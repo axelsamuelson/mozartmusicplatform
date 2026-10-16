@@ -20,6 +20,11 @@ export type RatingNeighborsProps = {
   spotifyId: string;
   /** Live score from the slider — neighbors refresh as this changes. */
   score: number;
+  /**
+   * Changes when saved tempo/intensity/genres change so neighbors refetch
+   * vibe-aware matches after save (score may be unchanged).
+   */
+  vibeKey?: string;
 };
 
 const SCORE_DEBOUNCE_MS = 80;
@@ -104,7 +109,11 @@ function NeighborsSkeleton() {
   );
 }
 
-export function RatingNeighbors({ spotifyId, score }: RatingNeighborsProps) {
+export function RatingNeighbors({
+  spotifyId,
+  score,
+  vibeKey = "",
+}: RatingNeighborsProps) {
   const [neighbors, setNeighbors] = useState<RatingNeighborsResult | null>(
     null,
   );
@@ -136,7 +145,7 @@ export function RatingNeighbors({ spotifyId, score }: RatingNeighborsProps) {
       window.clearTimeout(timer);
       ac.abort();
     };
-  }, [spotifyId, score]);
+  }, [spotifyId, score, vibeKey]);
 
   if (initialLoading && !neighbors) {
     return <NeighborsSkeleton />;
